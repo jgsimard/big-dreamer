@@ -62,9 +62,6 @@ def my_app(cfg: DictConfig):
 
     logger = Logger(params['logdir'])
 
-    # metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [],
-    #            'observation_loss': [], 'reward_loss': [], 'kl_loss': [], 'actor_loss': [], 'value_loss': []}
-
     #############
     # ENV
     #############

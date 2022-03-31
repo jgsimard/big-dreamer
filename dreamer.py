@@ -125,11 +125,11 @@ class Dreamer(Planet):
         ####################
         # DYNAMICS LEARNING
         ####################
-        logs = super(Dreamer, self).train_step()
+        logs = super(Dreamer, self).train_step() # planet
         ####################
         # BEHAVIOUR LEARNING
         ####################
-        logs.update(self.update_actor_critic(self.posterior_states, self.beliefs))
+        logs.update(self.update_actor_critic(self.posterior_states, self.beliefs)) # dreamer addition
         return logs
 
 
