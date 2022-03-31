@@ -62,7 +62,6 @@ class Planet(BaseAgent):
                                               env.action_size, self.bit_depth, utils.device)
 
         # initialize the different models
-        self.transition_model = self.observation_model = self.reward_model = self.encoder = None
         self.initialize_models()
 
         # optimization priors
@@ -86,7 +85,20 @@ class Planet(BaseAgent):
             self.encoder.load_state_dict(model_dicts['encoder'])
             self.model_optimizer.load_state_dict(model_dicts['model_optimizer'])
 
-    def randomly_initilalize_replay_buffer(self, metrics=None):
+    def eval(self):
+        self.transition_model.eval()
+        self.observation_model.eval()
+        self.reward_model.eval()
+        self.encoder.eval()
+
+    def train(self):
+        self.transition_model.train()
+        self.observation_model.train()
+        self.reward_model.train()
+        self.encoder.train()
+
+    def randomly_initialize_replay_buffer(self) :
+        total_steps = 0
         for s in range(1, self.seed_episodes + 1):
             done = False
             t = 0
@@ -97,11 +109,9 @@ class Planet(BaseAgent):
                 self.replay_buffer.append(observation, action, reward, done)
                 observation = next_observation
                 t += 1
-            # TODO : log metrics related to the random episodes
-            if metrics is not None:
-                metrics['steps'].append(
-                    t * self.action_repeat + (0 if len(metrics['steps']) == 0 else metrics['steps'][-1]))
-                metrics['episodes'].append(s)
+
+            total_steps += t * self.action_repeat
+        return total_steps, s
 
     def initialize_models(self):
         self.transition_model = TransitionModel(self.belief_size,
@@ -236,10 +246,18 @@ class Planet(BaseAgent):
 
     def train_step(self) -> dict:
         log = {}
+        ####################
+        # DYNAMICS LEARNING
+        ####################
+
+        # 1) Draw Sequences
+
         # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly
         # at random from the dataset (including terminal flags)
         # Transitions start at time t = 0
         observations, actions, rewards, nonterminals = self.replay_buffer.sample(self.batch_size, self.chunk_size)
+
+        # 2) Compute model States
 
         # Create initial belief and state for time t = 0
         init_belief = torch.zeros(self.batch_size, self.belief_size, device=utils.device)
@@ -249,6 +267,8 @@ class Planet(BaseAgent):
         # (over entire sequence at once)
         beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = self.transition_model(
             init_state, actions[:-1], init_belief, bottle(self.encoder, (observations[1:],)), nonterminals[:-1])
+
+        # 3) Update model weights
 
         # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting);
         # sum over final dims, average over batch and time
@@ -311,5 +331,5 @@ class Planet(BaseAgent):
         # Perform environment step (action repeats handled internally)
         next_observation, reward, done = env.step(action.cpu() if isinstance(env, EnvBatcher) else action[0].cpu())
 
-        self.replay_buffer.append(observation, action, reward, done)
+        # self.replay_buffer.append(observation, action, reward, done)
         return belief, posterior_state, action, next_observation, reward, done

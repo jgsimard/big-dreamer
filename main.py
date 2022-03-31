@@ -6,10 +6,12 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 from tqdm import tqdm
+from torchvision.utils import make_grid, save_image
 
 from planet import Planet
 from dreamer import Dreamer
-from env import Env
+from logger import Logger
+from env import Env, EnvBatcher
 from utils import init_gpu, device
 
 
@@ -49,22 +51,33 @@ def my_app(cfg: DictConfig):
 
     print("\nLOGGING TO: ", logdir, "\n")
 
-    ###################
-    ### RUN TRAINING
-    ###################
+    #############
+    # INIT Structure
+    #############
     np.random.seed(params['seed'])
     torch.manual_seed(params['seed'])
     random.seed(params['seed'])
 
     init_gpu(use_gpu=not params['disable_cuda'])
 
-    metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [],
-               'observation_loss': [], 'reward_loss': [], 'kl_loss': [], 'actor_loss': [], 'value_loss': []}
+    logger = Logger(params['logdir'])
 
-    # Initialise training environment
-    env = Env(params['env'], params['symbolic_env'], params['seed'], params['max_episode_length'],
-              params['action_repeat'], params['bit_depth'])
+    # metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [],
+    #            'observation_loss': [], 'reward_loss': [], 'kl_loss': [], 'actor_loss': [], 'value_loss': []}
 
+    #############
+    # ENV
+    #############
+    env = Env(params['env'],
+              params['symbolic_env'],
+              params['seed'],
+              params['max_episode_length'],
+              params['action_repeat'],
+              params['bit_depth'])
+
+    #############
+    # Model
+    #############
 
     if params['algorithm'] == 'planet':
         model = Planet(params, env)
@@ -75,52 +88,134 @@ def my_app(cfg: DictConfig):
     else:
         raise NotImplementedError(f'algorithm {params["algorithm"]} is not yet implemented.')
 
-    model.randomly_initilalize_replay_buffer(metrics)
+    env_steps, num_episodes = model.randomly_initialize_replay_buffer()
+
+    ###################
+    # RUN TRAINING
+    ###################
+    train_step = 0
 
     # Training
-    for episode in tqdm(range(metrics['episodes'][-1] + 1, params['episodes'] + 1), total=params['episodes'],
-                        initial=metrics['episodes'][-1] + 1):
+    for episode in tqdm(range(num_episodes+1, params['episodes']+1), total=params['episodes'], initial=num_episodes+1):
         # Model fitting
         print("training loop")
         for s in tqdm(range(params['collect_interval'])):
-            model.train_step()
+            logs = model.train_step()
 
-        # Update and plot loss metrics
-        # TODO : log the metrics
+            # if train_step % params['log_freq'] == 0:
+            #     print("Perform Logging")
+            #     # perform the logging
+            #     for key, value in logs.items():
+            #         print('{} : {}'.format(key, value))
+            #         logger.log_scalar(value, key, train_step)
+            #     print('Done logging...\n')
+            #
+            #     logger.flush()
 
-        # Data collection
+            train_step += 1
+
+        ##########################
+        # Environment interaction
+        ##########################
         print("Data collection")
         with torch.no_grad():
-            observation, total_reward = env.reset(), 0
+            observation = env.reset()
+            total_reward = 0
             belief = torch.zeros(1, params['belief_size'], device=device)
             posterior_state = torch.zeros(1, params['state_size'], device=device)
             action = torch.zeros(1, env.action_size, device=device)
 
             pbar = tqdm(range(params['max_episode_length'] // params['action_repeat']))
             for t in pbar:
-                belief, posterior_state, action, next_observation, reward, done = model.update_belief_and_act(
+                outputs = model.update_belief_and_act(
                     env,
                     belief,
                     posterior_state,
                     action,
                     observation.to(device=device),
                     explore=True)
+                belief, posterior_state, action, next_observation, reward, done = outputs
+
+                # store the new stuff
+                model.replay_buffer.append(observation, action, reward, done)
+
                 total_reward += reward
                 observation = next_observation
+
                 if params['render']:
                     env.render()
                 if done:
                     pbar.close()
                     break
 
-            # Update and plot train reward metrics
-            # TODO : Log metrics
+            env_steps += t * params['action_repeat']
+            num_episodes += 1
+            logs['episodique_total_reward'] = total_reward
 
+        ##########################
         # Test model
-        print("Test model")
+        ##########################
+
         # TODO : Test Model
+        if episode % params['test_interval'] == 0:
+            print("Test model")
+            model.eval()
+
+            # Initialise parallelised test environments
+            test_envs = EnvBatcher(Env, (params['env'],
+                                         params['symbolic_env'],
+                                         params['seed'],
+                                         params['max_episode_length'],
+                                         params['action_repeat'],
+                                         params['bit_depth']),
+                                   {},
+                                   params['test_episodes'])
+
+            with torch.no_grad():
+                observation = test_envs.reset()
+                total_rewards = np.zeros((params['test_episodes'],))
+                video_frames = []
+
+                belief = torch.zeros(params['test_episodes'], params['belief_size'],  device=device)
+                posterior_state = torch.zeros(params['test_episodes'], params['state_size'],device=device)
+                action = torch.zeros(params['test_episodes'], env.action_size, device=device)
+
+                pbar = tqdm(range(params['max_episode_length'] // params['action_repeat']))
+                for t in pbar:
+                    outputs = model.update_belief_and_act(
+                        test_envs,
+                        belief,
+                        posterior_state,
+                        action,
+                        observation.to(device=device))
+                    belief, posterior_state, action, next_observation, reward, done = outputs
+
+                    total_rewards += reward.numpy()
+                    # Collect real vs. predicted frames for video
+                    if not params['symbolic_env']:
+                        video_frames.append(make_grid(
+                            torch.cat([observation, model.observation_model(belief, posterior_state).cpu()], dim=3) + 0.5,
+                            nrow=5).numpy())  # Decentre
+                    observation = next_observation
+                    if done.sum().item() == params['test_episodes']:
+                        pbar.close()
+                        break
+
+                logs['Eval_avg_return'] = total_rewards.mean()
+                logs['Eval_std_return'] = total_rewards.std()
 
         # TODO : Save Model
+
+
+        if train_step % params['log_freq'] == 0:
+            print("Perform Logging")
+            # perform the logging
+            for key, value in logs.items():
+                print('{} : {}'.format(key, value))
+                logger.log_scalar(value, key, env_steps)
+            print('Done logging...\n')
+
+            logger.flush()
 
     # Close training environment
     env.close()

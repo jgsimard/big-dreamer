@@ -47,3 +47,4 @@ checkpoint_experience: False
 models: ''
 experience_replay: ''
 render: False
+log_freq : 1

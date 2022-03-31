@@ -72,10 +72,13 @@ class Dreamer(Planet):
                torch.stack(prior_means[1:], dim=0), \
                torch.stack(prior_std_devs[1:], dim=0)
 
-    def update_actor_critic(self, posterior_states, beliefs):
-        ###############
-        # Update Actor
-        ###############
+    def update_actor_critic(self, posterior_states, beliefs) -> dict:
+        logs = {}
+        ####################
+        # BEHAVIOUR LEARNING
+        ####################
+
+        # Imagine trajectories
         with torch.no_grad():
             actor_states = posterior_states.detach()
             actor_beliefs = beliefs.detach()
@@ -83,22 +86,24 @@ class Dreamer(Planet):
             imged_beliefs, imged_prior_states, imged_prior_means, imged_prior_std_devs = self.imagine_ahead(
                 actor_states, actor_beliefs)
 
+        # Predict Rewards & Values
         with FreezeParameters(self.model_modules + self.critic_model.modules):
             imged_reward = bottle(self.reward_model, (imged_beliefs, imged_prior_states))
             value_pred = bottle(self.critic_model, (imged_beliefs, imged_prior_states))
+
+        # Compute Values estimates
         returns = lambda_return(imged_reward, value_pred, bootstrap=value_pred[-1], discount=self.discount,
                                 lambda_=self.disclam)
-        actor_loss = -torch.mean(returns)
 
-        # Update model parameters
+        # Update Actor weights
+        actor_loss = -torch.mean(returns)
+        logs['actor_loss'] = actor_loss
+
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         nn.utils.clip_grad_norm_(self.actor_model.parameters(), self.grad_clip_norm, norm_type=2)
         self.actor_optimizer.step()
 
-        ###############
-        # Update Critic
-        ###############
         with torch.no_grad():
             value_beliefs = imged_beliefs.detach()
             value_prior_states = imged_prior_states.detach()
@@ -106,6 +111,7 @@ class Dreamer(Planet):
         # detach the input tensor from the transition network.
         value_dist = Normal(bottle(self.critic_model, (value_beliefs, value_prior_states)), 1)
         value_loss = -value_dist.log_prob(target_return).mean(dim=(0, 1))
+        logs['value_loss'] = value_loss
 
         # Update model parameters
         self.value_optimizer.zero_grad()
@@ -113,12 +119,18 @@ class Dreamer(Planet):
         nn.utils.clip_grad_norm_(self.critic_model.parameters(), self.grad_clip_norm, norm_type=2)
         self.value_optimizer.step()
 
-        return [actor_loss.item(), value_loss.item()]
+        return logs
 
     def train_step(self) -> dict:
-        log = super(Dreamer, self).train_step()
-        log.update(self.update_actor_critic(self.posterior_states, self.beliefs))
-        return log
+        ####################
+        # DYNAMICS LEARNING
+        ####################
+        logs = super(Dreamer, self).train_step()
+        ####################
+        # BEHAVIOUR LEARNING
+        ####################
+        logs.update(self.update_actor_critic(self.posterior_states, self.beliefs))
+        return logs
 
 
 def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.95):
