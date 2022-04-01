@@ -201,6 +201,8 @@ def my_app(cfg: DictConfig):
                 logs['Eval_avg_return'] = total_rewards.mean()
                 logs['Eval_std_return'] = total_rewards.std()
 
+            test_envs.close()
+
         # TODO : Save Model
 
 
