@@ -1,18 +1,24 @@
 import os
 from tensorboardX import SummaryWriter
 import numpy as np
+import wandb
 
 class Logger:
-    def __init__(self, log_dir, n_logged_samples=10, summary_writer=None):
+    def __init__(self, log_dir, n_logged_samples=10, summary_writer=None, params=None):
         self._log_dir = log_dir
         print('########################')
         print('logging outputs to ', log_dir)
         print('########################')
         self._n_logged_samples = n_logged_samples
         self._summ_writer = SummaryWriter(log_dir, flush_secs=1, max_queue=1)
+        if params['wandb_project'] is not None:
+            wandb.init(project=params['wandb_project'], entity="big-dreamer")
+            wandb.config.update(params)
+
 
     def log_scalar(self, scalar, name, step_):
         self._summ_writer.add_scalar('{}'.format(name), scalar, step_)
+        wandb.log({'{}'.format(name) : scalar}, step=step_)
 
     def log_scalars(self, scalar_dict, group_name, step, phase):
         """Will log all scalars in the same plot."""

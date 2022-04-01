@@ -97,7 +97,7 @@ class Dreamer(Planet):
 
         # Update Actor weights
         actor_loss = -torch.mean(returns)
-        logs['actor_loss'] = actor_loss
+        logs['actor_loss'] = actor_loss.item()
 
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -111,7 +111,7 @@ class Dreamer(Planet):
         # detach the input tensor from the transition network.
         value_dist = Normal(bottle(self.critic_model, (value_beliefs, value_prior_states)), 1)
         value_loss = -value_dist.log_prob(target_return).mean(dim=(0, 1))
-        logs['value_loss'] = value_loss
+        logs['value_loss'] = value_loss.item()
 
         # Update model parameters
         self.value_optimizer.zero_grad()

@@ -111,6 +111,7 @@ class Planet(BaseAgent):
                 t += 1
 
             total_steps += t * self.action_repeat
+        self.env.close()
         return total_steps, s
 
     def initialize_models(self):

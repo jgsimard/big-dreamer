@@ -60,17 +60,24 @@ def my_app(cfg: DictConfig):
 
     init_gpu(use_gpu=not params['disable_cuda'])
 
-    logger = Logger(params['logdir'])
+    logger = Logger(params['logdir'], params=params)
 
     #############
     # ENV
     #############
+
     env = Env(params['env'],
               params['symbolic_env'],
               params['seed'],
               params['max_episode_length'],
               params['action_repeat'],
               params['bit_depth'])
+
+    # simulation timestep, will be used for video saving
+    if 'model' in dir(env):
+        fps = 1/env.model.opt.timestep
+    else:
+        fps = 10
 
     #############
     # Model
@@ -99,14 +106,13 @@ def my_app(cfg: DictConfig):
         for s in tqdm(range(params['collect_interval'])):
             logs = model.train_step()
 
+            # Not sure we really want this?
             # if train_step % params['log_freq'] == 0:
-            #     print("Perform Logging")
             #     # perform the logging
             #     for key, value in logs.items():
-            #         print('{} : {}'.format(key, value))
-            #         logger.log_scalar(value, key, train_step)
-            #     print('Done logging...\n')
-            #
+            #         print('{} : {}'.format('Train_'+key, value))
+            #         logger.log_scalar(value, 'Train_'+key, train_step)
+            
             #     logger.flush()
 
             train_step += 1
@@ -143,6 +149,7 @@ def my_app(cfg: DictConfig):
                     env.render()
                 if done:
                     pbar.close()
+                    env.close()
                     break
 
             env_steps += t * params['action_repeat']
@@ -196,22 +203,25 @@ def my_app(cfg: DictConfig):
                     observation = next_observation
                     if done.sum().item() == params['test_episodes']:
                         pbar.close()
+                        test_envs.close()
                         break
 
                 logs['Eval_avg_return'] = total_rewards.mean()
                 logs['Eval_std_return'] = total_rewards.std()
 
         # TODO : Save Model
-
+        if train_step % params['log_video_freq'] == 0 and params['log_video_freq']!=-1:
+            # log eval videos
+            logger.log_video(np.expand_dims(np.stack(video_frames), axis=0), name='Eval_rollout', step=train_step)
 
         if train_step % params['log_freq'] == 0:
             print("Perform Logging")
             # perform the logging
             for key, value in logs.items():
                 print('{} : {}'.format(key, value))
-                logger.log_scalar(value, key, env_steps)
+                logger.log_scalar(value, key, env_steps) # should this be train_step?
             print('Done logging...\n')
-
+            
             logger.flush()
 
     # Close training environment
