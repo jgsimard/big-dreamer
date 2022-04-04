@@ -4,10 +4,24 @@ from torch import jit
 
 # Model-predictive control planner with cross-entropy method and learned transition model
 class MPCPlanner(jit.ScriptModule):
-    __constants__ = ['action_size', 'planning_horizon', 'optimisation_iters', 'candidates', 'top_candidates']
+    __constants__ = [
+        "action_size",
+        "planning_horizon",
+        "optimisation_iters",
+        "candidates",
+        "top_candidates",
+    ]
 
-    def __init__(self, action_size, planning_horizon, optimisation_iters, candidates, top_candidates, transition_model,
-                 reward_model):
+    def __init__(
+        self,
+        action_size,
+        planning_horizon,
+        optimisation_iters,
+        candidates,
+        top_candidates,
+        transition_model,
+        reward_model,
+    ):
         super().__init__()
         self.transition_model, self.reward_model = transition_model, reward_model
         self.action_size = action_size
@@ -22,26 +36,48 @@ class MPCPlanner(jit.ScriptModule):
         state = state.unsqueeze(dim=1).expand(B, self.candidates, Z).reshape(-1, Z)
 
         # Initialize factorized belief over action sequences q(a_t:t+H) ~ N(0, I)
-        action_mean = torch.zeros(self.planning_horizon, B, 1, self.action_size, device=belief.device)
-        action_std_dev = torch.ones(self.planning_horizon, B, 1, self.action_size, device=belief.device)
+        action_mean = torch.zeros(
+            self.planning_horizon, B, 1, self.action_size, device=belief.device
+        )
+        action_std_dev = torch.ones(
+            self.planning_horizon, B, 1, self.action_size, device=belief.device
+        )
 
         for _ in range(self.optimisation_iters):
             # print("optimization_iters",_)
             # Evaluate J action sequences from the current belief (over entire sequence at once, batched over particles)
             # Sample actions (time x (batch x candidates) x actions)
-            noise = torch.randn(self.planning_horizon, B, self.candidates, self.action_size, device=action_mean.device)
-            actions = (action_mean + action_std_dev * noise).view(self.planning_horizon, B * self.candidates, self.action_size)
+            noise = torch.randn(
+                self.planning_horizon,
+                B,
+                self.candidates,
+                self.action_size,
+                device=action_mean.device,
+            )
+            actions = (action_mean + action_std_dev * noise).view(
+                self.planning_horizon, B * self.candidates, self.action_size
+            )
             # Sample next states
             # [12, 1000, 200] [12, 1000, 30] : 12 horizon steps; 1000 candidates
             beliefs, states, _, _ = self.transition_model(state, actions, belief)
             # Calculate expected returns (technically sum of rewards over planning horizon)
             # output from r-model[12000]->view[12, 1000]->sum[1000]
-            returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z)).view(self.planning_horizon, -1).sum(dim=0)
+            returns = (
+                self.reward_model(beliefs.view(-1, H), states.view(-1, Z))
+                .view(self.planning_horizon, -1)
+                .sum(dim=0)
+            )
             # Re-fit belief to the K best action sequences
-            _, topk = returns.reshape(B, self.candidates).topk(self.top_candidates, dim=1, largest=True, sorted=False)
+            _, topk = returns.reshape(B, self.candidates).topk(
+                self.top_candidates, dim=1, largest=True, sorted=False
+            )
             # Fix indices for unrolled actions
-            topk += self.candidates * torch.arange(0, B, dtype=torch.int64, device=topk.device).unsqueeze(dim=1)
-            best_actions = actions[:, topk.view(-1)].reshape(self.planning_horizon, B, self.top_candidates, self.action_size)
+            topk += self.candidates * torch.arange(
+                0, B, dtype=torch.int64, device=topk.device
+            ).unsqueeze(dim=1)
+            best_actions = actions[:, topk.view(-1)].reshape(
+                self.planning_horizon, B, self.top_candidates, self.action_size
+            )
 
             # Update belief with new means and standard deviations
             action_mean = best_actions.mean(dim=2, keepdim=True)
