@@ -4,6 +4,10 @@ from torch import jit
 
 # Model-predictive control planner with cross-entropy method and learned transition model
 class MPCPlanner(jit.ScriptModule):
+    """
+    Model-predictive control planner with cross-entropy method and learned transition model.
+    """
+
     __constants__ = [
         "action_size",
         "planning_horizon",
@@ -44,8 +48,8 @@ class MPCPlanner(jit.ScriptModule):
         )
 
         for _ in range(self.optimisation_iters):
-            # print("optimization_iters",_)
-            # Evaluate J action sequences from the current belief (over entire sequence at once, batched over particles)
+            # Evaluate J action sequences from the current belief (over entire sequence at once,
+            # batched over particles)
             # Sample actions (time x (batch x candidates) x actions)
             noise = torch.randn(
                 self.planning_horizon,
