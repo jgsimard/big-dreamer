@@ -5,6 +5,10 @@ from env import postprocess_observation, preprocess_observation_
 
 
 class ExperienceReplay:
+    """
+    Experience replay memory.
+    """
+
     def __init__(
         self, size, symbolic_env, observation_size, action_size, bit_depth, device
     ):
@@ -27,6 +31,10 @@ class ExperienceReplay:
         self.bit_depth = bit_depth
 
     def append(self, observation, action, reward, done):
+        """
+        Append a new experience to the memory.
+        """
+
         if self.symbolic_env:
             self.observations[self.idx] = observation.numpy()
         else:
@@ -40,8 +48,13 @@ class ExperienceReplay:
         self.full = self.full or self.idx == 0
         self.steps, self.episodes = self.steps + 1, self.episodes + (1 if done else 0)
 
-    # Returns an index for a valid single sequence chunk uniformly sampled from the memory
     def _sample_idx(self, L):
+        """
+        Sample a single sequence chunk uniformly from the memory.
+
+        Returns an index for a valid single sequence chunk uniformly sampled from the memory
+        """
+
         valid_idx = False
         while not valid_idx:
             idx = np.random.randint(0, self.size if self.full else self.idx - L)
@@ -52,6 +65,10 @@ class ExperienceReplay:
         return idxs
 
     def _retrieve_batch(self, idxs, n, L):
+        """
+        Retrieve a batch of sequence chunks uniformly sampled from the memory.
+        """
+
         vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
         observations = torch.as_tensor(self.observations[vec_idxs].astype(np.float32))
         if not self.symbolic_env:
@@ -65,13 +82,18 @@ class ExperienceReplay:
             self.nonterminals[vec_idxs].reshape(L, n, 1),
         )
 
-    # Returns a batch of sequence chunks uniformly sampled from the memory
     def sample(self, n, L):
+        """
+        Sample a batch of sequence chunks uniformly from the memory.
+
+        Returns a batch of sequence chunks uniformly sampled from the memory
+        """
+
         batch = self._retrieve_batch(
             np.asarray([self._sample_idx(L) for _ in range(n)]), n, L
         )
         # print(np.asarray([self._sample_idx(L) for _ in range(n)]))
-        # [1578 1579 1580 ... 1625 1626 1627]                                                                                                                                        | 0/100 [00:00<?, ?it/s]
+        # [1578 1579 1580 ... 1625 1626 1627] | 0/100 [00:00<?, ?it/s]
         # [1049 1050 1051 ... 1096 1097 1098]
         # [1236 1237 1238 ... 1283 1284 1285]
         # ...

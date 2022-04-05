@@ -14,6 +14,16 @@ from torch.nn import Module
 
 # Plots min, max and mean + standard deviation bars of a population over time
 def lineplot(xs, ys_population, title, path="", xaxis="episode"):
+    """
+    Plots min, max and mean + standard deviation bars of a population over time.
+
+    :param xs: list of x values
+    :param ys_population: list of y values
+    :param title: title of the plot
+    :param path: path to save the plot
+    :param xaxis: x axis label
+    """
+
     max_colour, mean_colour, std_colour, transparent = (
         "rgb(0, 132, 180)",
         "rgb(0, 172, 237)",
@@ -21,7 +31,7 @@ def lineplot(xs, ys_population, title, path="", xaxis="episode"):
         "rgba(0, 0, 0, 0)",
     )
 
-    if isinstance(ys_population[0], list) or isinstance(ys_population[0], tuple):
+    if isinstance(ys_population[0], (list, tuple)):
         ys = np.asarray(ys_population, dtype=np.float32)
         ys_min, ys_max, ys_mean, ys_std, ys_median = (
             ys.min(1),
@@ -86,35 +96,42 @@ def lineplot(xs, ys_population, title, path="", xaxis="episode"):
 
 
 def write_video(frames, title, path=""):
+    """
+    Writes a video from a list of frames.
+    """
+
     frames = (
         np.multiply(np.stack(frames, axis=0).transpose(0, 2, 3, 1), 255)
         .clip(0, 255)
         .astype(np.uint8)[:, :, :, ::-1]
     )  # VideoWrite expects H x W x C in BGR
     _, H, W, _ = frames.shape
+
     writer = cv2.VideoWriter(
-        os.path.join(path, "%s.mp4" % title),
+        os.path.join(path, f"{title}.mp4"),
         cv2.VideoWriter_fourcc(*"mp4v"),
         30.0,
         (W, H),
         True,
     )
+
     for frame in frames:
         writer.write(frame)
     writer.release()
 
 
 class ActivateParameters:
+    """
+    Context manager to locally Activate the gradients.
+    example:
+    ```
+    with ActivateParameters([module]):
+        output_tensor = module(input_tensor)
+    ```
+    :param modules: iterable of modules. used to call .parameters() to freeze gradients.
+    """
+
     def __init__(self, modules: Iterable[Module]):
-        """
-        Context manager to locally Activate the gradients.
-        example:
-        ```
-        with ActivateParameters([module]):
-            output_tensor = module(input_tensor)
-        ```
-        :param modules: iterable of modules. used to call .parameters() to freeze gradients.
-        """
         self.modules = modules
         self.param_states = [p.requires_grad for p in get_parameters(self.modules)]
 
@@ -143,17 +160,19 @@ def get_parameters(modules: Iterable[Module]):
 
 
 class FreezeParameters:
+    """
+    Context manager to locally freeze gradients.
+    In some cases with can speed up computation because gradients aren't calculated
+    for these listed modules.
+    example:
+    ```
+    with FreezeParameters([module]):
+        output_tensor = module(input_tensor)
+    ```
+    :param modules: iterable of modules. used to call .parameters() to freeze gradients.
+    """
+
     def __init__(self, modules: Iterable[Module]):
-        """
-        Context manager to locally freeze gradients.
-        In some cases with can speed up computation because gradients aren't calculated for these listed modules.
-        example:
-        ```
-        with FreezeParameters([module]):
-            output_tensor = module(input_tensor)
-        ```
-        :param modules: iterable of modules. used to call .parameters() to freeze gradients.
-        """
         self.modules = modules
         self.param_states = [p.requires_grad for p in get_parameters(self.modules)]
 
@@ -170,10 +189,12 @@ class FreezeParameters:
 
 
 def member_initialize(wrapped__init__):
-    """Decorator to initialize members of a class with the named arguments. (i.e. so D.R.Y. principle is maintained
-    for class initialization).
+    """
+    Decorator to initialize members of a class with the named arguments.
+    (i.e. so D.R.Y. principle is maintained for class initialization).
 
-    Modified from http://stackoverflow.com/questions/1389180/python-automatically-initialize-instance-variables
+    Modified from
+    http://stackoverflow.com/questions/1389180/python-automatically-initialize-instance-variables
     :param wrapped__init__:
     :returns:
     :rtype:
@@ -199,10 +220,12 @@ def member_initialize(wrapped__init__):
 
 
 def hidden_member_initialize(wrapped__init__):
-    """Decorator to initialize members of a class with the named arguments. (i.e. so D.R.Y. principle is maintained
-    for class initialization).
+    """
+    Decorator to initialize members of a class with the named arguments.
+    (i.e. so D.R.Y. principle is maintained for class initialization).
 
-    Modified from http://stackoverflow.com/questions/1389180/python-automatically-initialize-instance-variables
+    Modified from
+    http://stackoverflow.com/questions/1389180/python-automatically-initialize-instance-variables
     :param wrapped__init__:
     :returns:
     :rtype:
@@ -228,10 +251,12 @@ def hidden_member_initialize(wrapped__init__):
 
 
 def tensor_member_initialize(wrapped__init__):
-    """Decorator to initialize members of a class with the named arguments. (i.e. so D.R.Y. principle is maintained
-    for class initialization).
+    """
+    Decorator to initialize members of a class with the named arguments.
+    (i.e. so D.R.Y. principle is maintained for class initialization).
 
-    Modified from http://stackoverflow.com/questions/1389180/python-automatically-initialize-instance-variables
+    Modified from
+    http://stackoverflow.com/questions/1389180/python-automatically-initialize-instance-variables
     :param wrapped__init__:
     :returns:
     :rtype:
@@ -261,13 +286,17 @@ def tensor_member_initialize(wrapped__init__):
 
 
 class classproperty(object):
+    """
+    Decorator to make a class property.
+    """
+
     def __init__(self, f):
-        """Decorator to enable access to properties of both classes and instances of classes
+        """
+        Decorator to enable access to properties of both classes and instances of classes.
 
         :param f:
         :returns:
         :rtype:
-
         """
 
         self.f = f
@@ -280,28 +309,56 @@ device = None
 
 
 def init_gpu(use_gpu=True, gpu_id=0):
+    """
+    Initialize the GPU.
+
+    :param use_gpu: if True, use GPU.
+    :param gpu_id: id of the GPU to use.
+    :return: None
+    """
+
     global device
     if torch.cuda.is_available() and use_gpu:
         device = torch.device("cuda:" + str(gpu_id))
-        print("Using GPU id {}".format(gpu_id))
+        print(f"Using GPU id {gpu_id}")
     else:
         device = torch.device("cpu")
         print("GPU not detected. Defaulting to CPU.")
 
 
 def set_device(gpu_id):
+    """
+    Set the device to use.
+    """
     torch.cuda.set_device(gpu_id)
 
 
 def from_numpy(*args, **kwargs):
+    """
+    Convert a numpy array to a torch tensor.
+    """
+
     return torch.from_numpy(*args, **kwargs).float().to(device)
 
 
 def to_numpy(tensor):
+    """
+    Convert a torch tensor to a numpy array.
+    """
+
     return tensor.to("cpu").detach().numpy()
 
 
 class Flatten(torch.nn.Module):
+    """
+    Flatten a tensor.
+    """
+
     def forward(self, x):
+        """
+        Flatten a tensor.
+        :param x: tensor to flatten.
+        """
+
         batch_size = x.shape[0]
         return x.view(batch_size, -1)

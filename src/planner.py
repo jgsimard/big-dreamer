@@ -2,7 +2,6 @@ import torch
 from torch import jit
 
 
-# Model-predictive control planner with cross-entropy method and learned transition model
 class MPCPlanner(jit.ScriptModule):
     """
     Model-predictive control planner with cross-entropy method and learned transition model.
@@ -35,6 +34,14 @@ class MPCPlanner(jit.ScriptModule):
 
     @jit.script_method
     def forward(self, belief, state):
+        """
+        Plan actions for the given belief and state.
+
+        :param belief: (B, H, Z)
+        :param state: (B, Z)
+        :return: actions (B, H, A)
+        """
+
         B, H, Z = belief.size(0), belief.size(1), state.size(1)
         belief = belief.unsqueeze(dim=1).expand(B, self.candidates, H).reshape(-1, H)
         state = state.unsqueeze(dim=1).expand(B, self.candidates, Z).reshape(-1, Z)
@@ -91,4 +98,8 @@ class MPCPlanner(jit.ScriptModule):
         return action_mean[0].squeeze(dim=1)
 
     def get_action(self, belief, posterior_state, deterministic=False):
+        """
+        Get action for the given belief and posterior state.
+        """
+
         return self.forward(belief, posterior_state)
