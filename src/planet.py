@@ -14,6 +14,10 @@ from base_agent import BaseAgent
 
 
 class Planet(BaseAgent):
+    """
+    A planet-based agent.
+    """
+
     def __init__(self, params, env):
         self.env = env
         self.belief_size = params["belief_size"]
@@ -56,6 +60,9 @@ class Planet(BaseAgent):
         self.action_noise = params["action_noise"]
         self.grad_clip_norm = params["grad_clip_norm"]
         self.action_repeat = params["action_repeat"]
+
+        self.posterior_states = None
+        self.beliefs = None
 
         self.replay_buffer = ExperienceReplay(
             self.experience_size,
@@ -100,18 +107,30 @@ class Planet(BaseAgent):
             self.model_optimizer.load_state_dict(model_dicts["model_optimizer"])
 
     def eval(self):
+        """
+        Set the models to evaluation mode.
+        """
+
         self.transition_model.eval()
         self.observation_model.eval()
         self.reward_model.eval()
         self.encoder.eval()
 
     def train(self):
+        """
+        Set the models to training mode.
+        """
+
         self.transition_model.train()
         self.observation_model.train()
         self.reward_model.train()
         self.encoder.train()
 
     def randomly_initialize_replay_buffer(self):
+        """
+        Initialize the replay buffer with random transitions.
+        """
+
         total_steps = 0
         for s in range(1, self.seed_episodes + 1):
             done = False
@@ -129,6 +148,10 @@ class Planet(BaseAgent):
         return total_steps, s
 
     def initialize_models(self):
+        """
+        Initialize the different models.
+        """
+
         self.transition_model = TransitionModel(
             self.belief_size,
             self.state_size,
@@ -172,6 +195,10 @@ class Planet(BaseAgent):
         )
 
     def initialize_optimizers(self):
+        """
+        Initialize the optimizers.
+        """
+
         self.model_modules = (
             self.transition_model.modules
             + self.observation_model.modules
@@ -190,6 +217,10 @@ class Planet(BaseAgent):
         )
 
     def compute_observation_loss(self, beliefs, posterior_states, observations):
+        """
+        Compute the observation loss.
+        """
+
         if self.worldmodel_LogProbLoss:
             observation_dist = Normal(
                 bottle(self.observation_model, (beliefs, posterior_states)), 1
@@ -213,6 +244,10 @@ class Planet(BaseAgent):
         return observation_loss
 
     def compute_reward_loss(self, beliefs, posterior_states, rewards):
+        """
+        Compute the reward loss.
+        """
+
         if self.worldmodel_LogProbLoss:
             reward_dist = Normal(
                 bottle(self.reward_model, (beliefs, posterior_states)), 1
@@ -229,11 +264,17 @@ class Planet(BaseAgent):
     def compute_kl_loss(
         self, posterior_means, posterior_std_devs, prior_means, prior_std_devs
     ):
+        """
+        Compute the KL loss.
+        """
+
         div = kl_divergence(
             Normal(posterior_means, posterior_std_devs),
             Normal(prior_means, prior_std_devs),
         ).sum(dim=2)
-        # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
+
+        # Note:
+        # Normalisation by overshooting distance and weighting by overshooting distance cancel out
         kl_loss = torch.max(div, self.free_nats).mean(dim=(0, 1))
         if self.global_kl_beta != 0:
             kl_loss += self.global_kl_beta * kl_divergence(
@@ -253,6 +294,10 @@ class Planet(BaseAgent):
         posterior_means,
         posterior_std_devs,
     ):
+        """
+        Compute the overshooting losses.
+        """
+
         overshooting_vars = []  # Collect variables for overshooting to process in batch
         for t in range(1, self.chunk_size - 1):
             d = min(
@@ -273,7 +318,8 @@ class Planet(BaseAgent):
             # (5) posterior means,
             # (6) posterior standard deviations and
             # (7) sequence masks
-            # Posterior standard deviations must be padded with > 0 to prevent infinite KL divergences
+            # Posterior standard deviations must be padded with > 0to prevent
+            # infinite KL divergences
             overshooting_vars.append(
                 (
                     F.pad(actions[t:d], seq_pad),
@@ -322,7 +368,8 @@ class Planet(BaseAgent):
             * (self.chunk_size - 1)
         )
         # Calculate overshooting reward prediction loss with sequence mask
-        # Update reward loss (compensating for extra average over each overshooting/open loop sequence)
+        # Update reward loss
+        # (compensating for extra average over each overshooting/open loop sequence)
         if self.overshooting_reward_scale != 0:
             reward_overshoothing_weight = (
                 1 / self.overshooting_distance
@@ -345,6 +392,10 @@ class Planet(BaseAgent):
         )
 
     def train_step(self) -> dict:
+        """
+        Train the model for one step.
+        """
+
         log = {}
         ####################
         # DYNAMICS LEARNING
@@ -367,8 +418,8 @@ class Planet(BaseAgent):
         )
         init_state = torch.zeros(self.batch_size, self.state_size, device=utils.device)
 
-        # Update belief/state using posterior from previous belief/state, previous action and current observation
-        # (over entire sequence at once)
+        # Update belief/state using posterior from previous belief/state,
+        # previous action and current observation (over entire sequence at once)
         (
             beliefs,
             prior_states,
@@ -387,7 +438,8 @@ class Planet(BaseAgent):
 
         # 3) Update model weights
 
-        # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting);
+        # Calculate observation likelihood, reward likelihood and KL losses
+        # (for t = 0 only for latent overshooting);
         # sum over final dims, average over batch and time
         # (original implementation, though paper seems to miss 1/T scaling?)
         observation_loss = self.compute_observation_loss(
@@ -426,7 +478,7 @@ class Planet(BaseAgent):
         model_loss = observation_loss + reward_loss + kl_loss
         log["model_loss"] = model_loss.item()
 
-        # TODO : add a learning rate schedule
+        # TODO: add a learning rate schedule
         # Update model parameters
         self.model_optimizer.zero_grad()
         model_loss.backward()
@@ -442,6 +494,10 @@ class Planet(BaseAgent):
     def update_belief_and_act(
         self, env, belief, posterior_state, action, observation, explore=False
     ):
+        """
+        Update belief and action given an observation.
+        """
+
         # Infer belief over current state q(s_t|o≤t,a<t) from the history
         # print("action size: ",action.size()) torch.Size([1, 6])
         # Action and observation need extra time dimension
@@ -460,7 +516,8 @@ class Planet(BaseAgent):
         if explore:
             # Add gaussian exploration noise on top of the sampled action
             action = torch.clamp(Normal(action, self.action_noise).rsample(), -1, 1)
-            # action = action + self.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
+            # Add exploration noise ε ~ p(ε) to the action
+            # action = action + self.action_noise * torch.randn_like(action)
         # Perform environment step (action repeats handled internally)
         next_observation, reward, done = env.step(
             action.cpu() if isinstance(env, EnvBatcher) else action[0].cpu()

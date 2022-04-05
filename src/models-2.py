@@ -1,9 +1,8 @@
+from typing import Union
+
 import torch
-
 from torch import nn, Tensor
-from typing import List, Set, Dict, Tuple, Optional, Union
 
-# from torch.nn import functional as F
 import torch.nn.functional as F
 import torch.distributions as D
 
@@ -13,15 +12,27 @@ Activation = Union[str, nn.Module]
 
 
 def merge_belief_and_state(belief: Tensor, state: Tensor) -> Tensor:
+    """
+    Merge the belief and state into a single tensor.
+    """
+
     return torch.cat([belief, state], dim=1)
 
 
 class TransitionModel(nn.Module):
+    """
+    Transition model.
+    """
+
     def __init__(self) -> None:
         super(TransitionModel, self).__init__()
 
 
 class ObservationModel(nn.Module):
+    """
+    Observation model.
+    """
+
     def __init__(
         self,
         belief_size: int,
@@ -48,12 +59,20 @@ class ObservationModel(nn.Module):
         )
 
     def forward(self, belief: Tensor, state: Tensor) -> Tensor:
+        """
+        Forward pass.
+        """
+
         x = self.linear(merge_belief_and_state(belief, state))
         x = x.view(-1, self.embedding_size, 1, 1)
         return self.deconvs(x)
 
 
 class RewardModel(nn.Module):
+    """
+    Reward model.
+    """
+
     def __init__(
         self,
         belief_size: int,
@@ -75,10 +94,18 @@ class RewardModel(nn.Module):
         )
 
     def forward(self, belief: Tensor, state: Tensor) -> Tensor:
+        """
+        Forward pass.
+        """
+
         return self.model(merge_belief_and_state(belief, state)).squeeze(dim=1)
 
 
 class CnnImageEncoder(nn.Module):
+    """
+    CNN image encoder.
+    """
+
     def __init__(self, embedding_size: int, activation: Activation = "relu") -> None:
         super(CnnImageEncoder, self).__init__()
 
@@ -102,25 +129,45 @@ class CnnImageEncoder(nn.Module):
         )
 
     def forward(self, observation: Tensor) -> Tensor:
+        """
+        Forward pass.
+        """
+
         return self.model(observation)
 
 
 class LinearCombination(nn.Module):
+    """
+    Linear combination of two inputs.
+    """
+
     def __init__(self, in1_size, in2_size, out_size):
         super(LinearCombination, self).__init__()
         self.in1_linear = nn.Linear(in1_size, out_size)
         self.in2_linear = nn.Linear(in2_size, bias=False)
 
     def forward(self, in1, in2):
+        """
+        Forward pass.
+        """
+
         return self.in1_linear(in1) + self.in1_linear(in2)
 
 
 def activation(x, layer_norm=False):
+    """
+    Activation function.
+    """
+
     norm = nn.LayerNorm if layer_norm else nn.Identity()
     return F.elu(norm(x))
 
 
 def diag_normal(x: Tensor, min_std=0.1, max_std=2.0):
+    """
+    Diagonal normal distribution.
+    """
+
     mean, std = x.chunk(2, -1)
     std = max_std * torch.sigmoid(std) + min_std
     return D.independent.Independent(D.normal.Normal(mean, std), 1)
@@ -128,6 +175,10 @@ def diag_normal(x: Tensor, min_std=0.1, max_std=2.0):
 
 # TODO Use Importance Weighted VAE to improve performance.
 class RSSM(nn.Module):
+    """
+    RSSM.
+    """
+
     def __init__(
         self,
         embedding_size: int,
@@ -157,6 +208,10 @@ class RSSM(nn.Module):
         self.posterior_parameters = nn.Linear(hidden_size, stochastic_size * 2)
 
     def prior(self, h):
+        """
+        Prior.
+        """
+
         return self.prior_out(activation(self.prior_h(h)))
 
     def forward(
@@ -167,12 +222,16 @@ class RSSM(nn.Module):
         z_in: Tensor,  # (T, B, stochastic_size)
         h_in: Tensor,  # (T, B, deterministic_size)
     ):
+        """
+        Forward pass.
+        """
+
         priors = []
         posts = []
         states_h = []
         samples = []
 
-        for t in range(T):
+        for _ in range(T):
             za = activation(self.za_combination(z_in, action))
             h_out = self.rnn(za, h_in)
             he = activation(self.he_combination(h_out, embedded))
@@ -198,10 +257,18 @@ class RSSM(nn.Module):
 
 
 class Dreamer(nn.Module):
+    """
+    Dreamer.
+    """
+
     def __init__(self):
         super(DreamerV1, self).__init__()
 
 
 class Planet(nn.Module):
+    """
+    Planet.
+    """
+
     def __init__(self):
         super(Planet, self).__init__()

@@ -9,18 +9,27 @@ from torch.distributions.transformed_distribution import TransformedDistribution
 from torch.nn import functional as F
 
 
-# Wraps the input tuple for a function to process a time x batch x features sequence in batch x features (assumes one output)
 def bottle(f, x_tuple):
+    """
+    Wraps the input tuple for a function to process a time x batch x features sequence in
+    batch x features (assumes one output)
+    """
+
     x_sizes = tuple(map(lambda x: x.size(), x_tuple))
     y = f(
         *map(lambda x: x[0].view(x[1][0] * x[1][1], *x[1][2:]), zip(x_tuple, x_sizes))
     )
     y_size = y.size()
     output = y.view(x_sizes[0][0], x_sizes[0][1], *y_size[1:])
+
     return output
 
 
 class TransitionModel(jit.ScriptModule):
+    """
+    Transition model for the MDP.
+    """
+
     __constants__ = ["min_std_dev"]
 
     def __init__(
@@ -52,8 +61,11 @@ class TransitionModel(jit.ScriptModule):
             self.fc_state_posterior,
         ]
 
-    # Operates over (previous) state, (previous) actions, (previous) belief, (previous) nonterminals (mask), and (current) observations
-    # Diagram of expected inputs and outputs for T = 5 (-x- signifying beginning of output belief/state that gets sliced off):
+    # Operates over (previous) state, (previous) actions, (previous) belief,
+    # (previous) nonterminals (mask), and (current) observations
+    # Diagram of expected inputs and outputs for T = 5 (-x- signifying beginning of output
+    # belief/state that gets sliced off):
+
     # t :  0  1  2  3  4  5
     # o :    -X--X--X--X--X-
     # a : -X--X--X--X--X-
@@ -62,6 +74,7 @@ class TransitionModel(jit.ScriptModule):
     # ps: -X-
     # b : -x--X--X--X--X--X-
     # s : -x--X--X--X--X--X-
+
     @jit.script_method
     def forward(
         self,
@@ -73,10 +86,14 @@ class TransitionModel(jit.ScriptModule):
     ) -> List[Tensor]:
         """
         Input: init_belief, init_state:  torch.Size([50, 200]) torch.Size([50, 30])
-        Output: beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs
-                torch.Size([49, 50, 200]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
+        Output: beliefs, prior_states, prior_means, prior_std_devs, posterior_states,
+                posterior_means, posterior_std_devs
+                torch.Size([49, 50, 200]) torch.Size([49, 50, 30])
+                torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
+                torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
         """
-        # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
+        # Create lists for hidden states
+        # (cannot use single tensor as buffer because autograd won't work with inplace writes)
         T = actions.size(0) + 1
         beliefs = [torch.empty(0)] * T
         prior_states = [torch.empty(0)] * T
@@ -114,7 +131,8 @@ class TransitionModel(jit.ScriptModule):
                 t + 1
             ] * torch.randn_like(prior_means[t + 1])
             if observations is not None:
-                # Compute state posterior by applying transition dynamics and using current observation
+                # Compute state posterior by applying transition dynamics and using
+                # current observation
                 t_ = (
                     t - 1
                 )  # Use t_ to deal with different time indexing for observations
@@ -149,6 +167,10 @@ class TransitionModel(jit.ScriptModule):
 
 
 class SymbolicObservationModel(jit.ScriptModule):
+    """
+    Symbolic observation model.
+    """
+
     def __init__(
         self,
         observation_size,
@@ -166,6 +188,11 @@ class SymbolicObservationModel(jit.ScriptModule):
 
     @jit.script_method
     def forward(self, belief, state):
+        """
+        Forward pass.
+        Input: belief, state
+        """
+
         hidden = self.act_fn(self.fc1(torch.cat([belief, state], dim=1)))
         hidden = self.act_fn(self.fc2(hidden))
         observation = self.fc3(hidden)
@@ -173,6 +200,10 @@ class SymbolicObservationModel(jit.ScriptModule):
 
 
 class VisualObservationModel(jit.ScriptModule):
+    """
+    Visual observation model.
+    """
+
     __constants__ = ["embedding_size"]
 
     def __init__(
@@ -190,6 +221,11 @@ class VisualObservationModel(jit.ScriptModule):
 
     @jit.script_method
     def forward(self, belief, state):
+        """
+        Forward pass.
+        Input: belief, state
+        """
+
         hidden = self.fc1(torch.cat([belief, state], dim=1))  # No nonlinearity here
         hidden = hidden.view(-1, self.embedding_size, 1, 1)
         hidden = self.act_fn(self.conv1(hidden))
@@ -207,6 +243,10 @@ def ObservationModel(
     embedding_size,
     activation_function="relu",
 ):
+    """
+    Create observation model.
+    """
+
     if symbolic:
         return SymbolicObservationModel(
             observation_size,
@@ -215,13 +255,17 @@ def ObservationModel(
             embedding_size,
             activation_function,
         )
-    else:
-        return VisualObservationModel(
-            belief_size, state_size, embedding_size, activation_function
-        )
+
+    return VisualObservationModel(
+        belief_size, state_size, embedding_size, activation_function
+    )
 
 
 class RewardModel(jit.ScriptModule):
+    """
+    Reward model.
+    """
+
     def __init__(
         self, belief_size, state_size, hidden_size, activation_function="relu"
     ):
@@ -235,6 +279,11 @@ class RewardModel(jit.ScriptModule):
 
     @jit.script_method
     def forward(self, belief, state):
+        """
+        Forward pass.
+        Input: belief, state
+        """
+
         x = torch.cat([belief, state], dim=1)
         hidden = self.act_fn(self.fc1(x))
         hidden = self.act_fn(self.fc2(hidden))
@@ -243,6 +292,10 @@ class RewardModel(jit.ScriptModule):
 
 
 class CriticModel(jit.ScriptModule):
+    """
+    Critic model.
+    """
+
     def __init__(
         self, belief_size, state_size, hidden_size, activation_function="relu"
     ):
@@ -256,6 +309,11 @@ class CriticModel(jit.ScriptModule):
 
     @jit.script_method
     def forward(self, belief, state):
+        """
+        Forward pass.
+        Input: belief, state
+        """
+
         x = torch.cat([belief, state], dim=1)
         hidden = self.act_fn(self.fc1(x))
         hidden = self.act_fn(self.fc2(hidden))
@@ -265,6 +323,10 @@ class CriticModel(jit.ScriptModule):
 
 
 class ActorModel(jit.ScriptModule):
+    """
+    Actor model.
+    """
+
     def __init__(
         self,
         belief_size,
@@ -293,6 +355,11 @@ class ActorModel(jit.ScriptModule):
 
     @jit.script_method
     def forward(self, belief, state):
+        """
+        Forward pass.
+        Input: belief, state
+        """
+
         raw_init_std = torch.log(torch.exp(self._init_std) - 1)
         x = torch.cat([belief, state], dim=1)
         hidden = self.act_fn(self.fc1(x))
@@ -307,18 +374,27 @@ class ActorModel(jit.ScriptModule):
         return action_mean, action_std
 
     def get_action(self, belief, state, deterministic=False):
+        """
+        Get action.
+        """
+
         action_mean, action_std = self.forward(belief, state)
         dist = Normal(action_mean, action_std)
         dist = TransformedDistribution(dist, TanhBijector())
         dist = torch.distributions.Independent(dist, 1)
         dist = SampleDist(dist)
+
         if deterministic:
             return dist.mode()
-        else:
-            return dist.rsample()
+
+        return dist.rsample()
 
 
 class SymbolicEncoder(jit.ScriptModule):
+    """
+    Symbolic encoder.
+    """
+
     def __init__(self, observation_size, embedding_size, activation_function="relu"):
         super().__init__()
         self.act_fn = getattr(F, activation_function)
@@ -329,6 +405,11 @@ class SymbolicEncoder(jit.ScriptModule):
 
     @jit.script_method
     def forward(self, observation):
+        """
+        Forward pass.
+        Input: observation
+        """
+
         hidden = self.act_fn(self.fc1(observation))
         hidden = self.act_fn(self.fc2(hidden))
         hidden = self.fc3(hidden)
@@ -336,6 +417,10 @@ class SymbolicEncoder(jit.ScriptModule):
 
 
 class VisualEncoder(jit.ScriptModule):
+    """
+    Visual encoder.
+    """
+
     __constants__ = ["embedding_size"]
 
     def __init__(self, embedding_size, activation_function="relu"):
@@ -353,6 +438,11 @@ class VisualEncoder(jit.ScriptModule):
 
     @jit.script_method
     def forward(self, observation):
+        """
+        Forward pass.
+        Input: observation
+        """
+
         hidden = self.act_fn(self.conv1(observation))
         hidden = self.act_fn(self.conv2(hidden))
         hidden = self.act_fn(self.conv3(hidden))
@@ -361,23 +451,36 @@ class VisualEncoder(jit.ScriptModule):
         hidden = self.fc(
             hidden
         )  # Identity if embedding size is 1024 else linear projection
+
         return hidden
 
 
 def Encoder(symbolic, observation_size, embedding_size, activation_function="relu"):
+    """
+    Encoder.
+    """
+
     if symbolic:
         return SymbolicEncoder(observation_size, embedding_size, activation_function)
-    else:
-        return VisualEncoder(embedding_size, activation_function)
+
+    return VisualEncoder(embedding_size, activation_function)
 
 
 # "atanh", "TanhBijector" and "SampleDist" are from the following repo
 # https://github.com/juliusfrost/dreamer-pytorch
 def atanh(x):
+    """
+    Inverse hyperbolic tangent.
+    """
+
     return 0.5 * torch.log((1 + x) / (1 - x))
 
 
 class TanhBijector(torch.distributions.Transform):
+    """
+    Bijector for the tanh function.
+    """
+
     def __init__(self):
         super().__init__()
         self.bijective = True
@@ -386,12 +489,25 @@ class TanhBijector(torch.distributions.Transform):
 
     @property
     def sign(self):
+        """
+        Sign of the bijector.
+        """
         return 1.0
 
     def _call(self, x):
+        """
+        Forward pass.
+        Input: x
+        """
+
         return torch.tanh(x)
 
     def _inverse(self, y: torch.Tensor):
+        """
+        Inverse pass.
+        Input: y
+        """
+
         y = torch.where(
             (torch.abs(y) <= 1.0), torch.clamp(y, -0.99999997, 0.99999997), y
         )
@@ -399,26 +515,50 @@ class TanhBijector(torch.distributions.Transform):
         return y
 
     def log_abs_det_jacobian(self, x, y):
+        """
+        Log of the absolute determinant of the Jacobian.
+        """
+
         return 2.0 * (np.log(2) - x - F.softplus(-2.0 * x))
 
 
 class SampleDist:
+    """
+    Sample from a distribution.
+    """
+
     def __init__(self, dist, samples=100):
         self._dist = dist
         self._samples = samples
 
     @property
     def name(self):
+        """
+        Name of the distribution.
+        """
+
         return "SampleDist"
 
     def __getattr__(self, name):
+        """
+        Get an attribute.
+        """
+
         return getattr(self._dist, name)
 
     def mean(self):
+        """
+        Mean of the distribution.
+        """
+        # TODO: need to be defined. Is dist here supposed to be _dist?
         sample = dist.rsample()
         return torch.mean(sample, 0)
 
     def mode(self):
+        """
+        Mode of the distribution.
+        """
+
         dist = self._dist.expand((self._samples, *self._dist.batch_shape))
         sample = dist.rsample()
         logprob = dist.log_prob(sample)
@@ -432,10 +572,18 @@ class SampleDist:
         return torch.gather(sample, 0, indices).squeeze(0)
 
     def entropy(self):
+        """
+        Entropy of the distribution.
+        """
+
         dist = self._dist.expand((self._samples, *self._dist.batch_shape))
         sample = dist.rsample()
         logprob = dist.log_prob(sample)
         return -torch.mean(logprob, 0)
 
     def sample(self):
+        """
+        Sample from the distribution.
+        """
+
         return self._dist.sample()
