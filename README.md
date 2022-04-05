@@ -3,6 +3,13 @@
 Based on initial code from:
 
 
+### Running Some of the Stuff
+
+#### Tests
+python -m unittest
+
+#### Code Quality
+python -m pylint src
 
 
 ## Installation Procedures from Homeworks
