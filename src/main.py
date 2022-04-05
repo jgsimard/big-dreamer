@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 from tqdm import tqdm
-from torchvision.utils import make_grid, save_image
+from torchvision.utils import make_grid
 
 from planet import Planet
 from dreamer import Dreamer
@@ -17,10 +17,18 @@ from utils import init_gpu, device
 
 @hydra.main(config_path="conf", config_name="config")
 def my_main(cfg: DictConfig):
+    """
+    Main function for running the experiments.
+    """
+
     my_app(cfg)
 
 
 def my_app(cfg: DictConfig):
+    """
+    Main function for running the experiments.
+    """
+
     # print(OmegaConf.to_yaml(cfg))
     print("Command Dir:", os.getcwd())
 
@@ -37,7 +45,7 @@ def my_app(cfg: DictConfig):
 
     data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
 
-    if not (os.path.exists(data_path)):
+    if not os.path.exists(data_path):
         os.makedirs(data_path)
 
     logdir = (
@@ -50,7 +58,7 @@ def my_app(cfg: DictConfig):
     )
     logdir = os.path.join(data_path, logdir)
     params["logdir"] = logdir
-    if not (os.path.exists(logdir)):
+    if not os.path.exists(logdir):
         os.makedirs(logdir)
     from omegaconf import open_dict
 
@@ -89,6 +97,8 @@ def my_app(cfg: DictConfig):
     else:
         fps = 10
 
+    print("fps: ", fps)
+
     #############
     # Model
     #############
@@ -119,7 +129,7 @@ def my_app(cfg: DictConfig):
     ):
         # Model fitting
         print("training loop")
-        for s in tqdm(range(params["collect_interval"])):
+        for _ in tqdm(range(params["collect_interval"])):
             logs = model.train_step()
 
             # Not sure we really want this?
@@ -176,6 +186,7 @@ def my_app(cfg: DictConfig):
                     env.close()
                     break
 
+            # TODO: check if this is correct. Variable t might be undefined
             env_steps += t * params["action_repeat"]
             num_episodes += 1
             logs["episodique_total_reward"] = total_reward

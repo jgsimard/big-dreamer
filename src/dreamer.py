@@ -9,6 +9,11 @@ from utils import FreezeParameters, device
 
 
 class Dreamer(Planet):
+    """
+    Dreamer is a Planet that learns to plan trajectories using a model-predictive control
+    algorithm.
+    """
+
     def __init__(self, params, env):
         super(Dreamer, self).__init__(params, env)
 
@@ -44,16 +49,22 @@ class Dreamer(Planet):
 
     def imagine_ahead(self, prev_state, prev_belief):
         """
-        imagine_ahead is the function to draw the imaginary tracjectory using the dynamics model, actor, critic.
-        Input: current state (posterior), current belief (hidden), policy, transition_model  # torch.Size([50, 30]) torch.Size([50, 200])
-        Output: generated trajectory of features includes beliefs, prior_states, prior_means, prior_std_devs
-                torch.Size([49, 50, 200]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
+        imagine_ahead is the function to draw the imaginary tracjectory using the
+        dynamics model, actor, critic.
+
+        Input:  current state (posterior), current belief (hidden), policy, transition_model
+                torch.Size([50, 30]) torch.Size([50, 200])
+        Output: generated trajectory of features includes beliefs, prior_states, prior_means,
+                prior_std_devs
+                torch.Size([49, 50, 200]) torch.Size([49, 50, 30])
+                torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
         """
         flatten = lambda x: x.view([-1] + list(x.size()[2:]))
         prev_belief = flatten(prev_belief)
         prev_state = flatten(prev_state)
 
-        # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
+        # Create lists for hidden states
+        # (cannot use single tensor as buffer because autograd won't work with inplace writes)
         T = self.planning_horizon
         beliefs, prior_states, prior_means, prior_std_devs = (
             [torch.empty(0)] * T,
@@ -98,6 +109,10 @@ class Dreamer(Planet):
         )
 
     def update_actor_critic(self, posterior_states, beliefs) -> dict:
+        """
+        update_actor_critic is the function to update the actor and critic models.
+        """
+
         logs = {}
         ####################
         # BEHAVIOUR LEARNING
@@ -107,6 +122,7 @@ class Dreamer(Planet):
         with torch.no_grad():
             actor_states = posterior_states.detach()
             actor_beliefs = beliefs.detach()
+
         with FreezeParameters(self.model_modules):
             (
                 imged_beliefs,
@@ -178,8 +194,13 @@ class Dreamer(Planet):
 
 
 def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.95):
-    # Setting lambda=1 gives a discounted Monte Carlo return.
-    # Setting lambda=0 gives a fixed 1-step return.
+    """
+    Compute the lambda-return for a given trajectory.
+
+    Setting lambda=1 gives a discounted Monte Carlo return.
+    Setting lambda=0 gives a fixed 1-step return.
+    """
+
     next_values = torch.cat([value_pred[1:], bootstrap[None]], 0)
     discount_tensor = discount * torch.ones_like(imged_reward)  # pcont
     inputs = imged_reward + discount_tensor * next_values * (1 - lambda_)
