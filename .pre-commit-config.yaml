@@ -15,15 +15,21 @@ repos:
     hooks:
       - id: black
 
-  # - repo: https://github.com/pycqa/pylint
-  #   rev: v2.13.0
-  #   hooks:
-  #   -   id: pylint
   - repo: local
     hooks:
     -   id: pylint
         name: pylint
-        entry: python -m pylint
+        entry: python -m pylint src
         language: system
         types: [python]
         require_serial: true
+
+  - repo: local
+    hooks:
+      - id: tests
+        name: tests
+        entry: python -m unittest
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true

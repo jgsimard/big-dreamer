@@ -4,7 +4,7 @@ from unittest import TestCase
 
 class TestFreezeParameters(TestCase):
     def test_freeze_parameters(self):
-        from utils import FreezeParameters
+        from src.utils import FreezeParameters
         import torchvision.models as models
 
         m = models.resnet18()
