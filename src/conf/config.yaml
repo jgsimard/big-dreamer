@@ -49,4 +49,4 @@ experience_replay: ''
 render: False
 log_freq : 1
 log_video_freq : -1
-wandb_project : 'test-project' # write null here for not using WandB
+wandb_project : null # 'test-project'

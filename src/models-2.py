@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Optional, List
 
 import torch
 from torch import nn, Tensor
@@ -18,14 +18,153 @@ def merge_belief_and_state(belief: Tensor, state: Tensor) -> Tensor:
 
     return torch.cat([belief, state], dim=1)
 
+def bottle(f, x_tuple: tuple # (belief, posterior_states)
+    ) -> Tensor: # shape: (belief[0].size(), belief[1].size(), *f().size()[1:])
+    """
+    Wraps the input tuple for a function to process a time x batch x features sequence in
+    batch x features (assumes one output)
+    """
+
+    x_sizes = tuple([x.size() for x in x_tuple])
+    y = f(
+        *[x[0].view(x[1][0] * x[1][1], *x[1][2:]) for x in zip(x_tuple, x_sizes)]
+    )
+    y_size = y.size()
+    output = y.view(x_sizes[0][0], x_sizes[0][1], *y_size[1:])
+
+    return output
 
 class TransitionModel(nn.Module):
     """
-    Transition model.
+    Transition model for the MDP.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        belief_size: int,
+        state_size: int,
+        action_size: int,
+        hidden_size: int,
+        embedding_size: int,
+        activation_function: Optional[str]="relu",
+        min_std_dev: float=0.1,
+    ) -> None:
         super(TransitionModel, self).__init__()
+
+        # general attibutes
+        if isinstance(activation_function, str):
+            activation_function = getattr(F, activation_function)
+        self.min_std_dev = min_std_dev
+        # recurrent component
+        self.rnn = nn.GRUCell(belief_size, belief_size)
+        # model components
+        self.fc_embed_state_action = nn.Sequential(
+            nn.Linear(state_size + action_size, belief_size),
+            activation_function
+        )
+        self.fc_embed_belief_prior = nn.Sequential(
+            nn.Linear(belief_size, hidden_size),
+            activation_function
+        )
+        self.fc_state_prior = nn.Linear(hidden_size, 2 * state_size)
+        self.fc_embed_belief_posterior = nn.Sequential(
+            nn.Linear(belief_size + embedding_size, hidden_size),
+            activation_function
+        )
+        self.fc_state_posterior = nn.Linear(hidden_size, 2 * state_size)
+        self.modules = [
+            self.fc_embed_state_action,
+            self.fc_embed_belief_prior,
+            self.fc_state_prior,
+            self.fc_embed_belief_posterior,
+            self.fc_state_posterior,
+        ]
+    
+    def forward(
+        self,
+        prev_state: Tensor,
+        actions: Tensor,
+        prev_belief: Tensor,
+        observations: Optional[Tensor] = None,
+        nonterminals: Optional[Tensor] = None,
+    ) -> List[Tensor]:
+        """
+        Input: init_belief, init_state:  torch.Size([50, 200]) torch.Size([50, 30])
+        Output: beliefs, prior_states, prior_means, prior_std_devs, posterior_states,
+                posterior_means, posterior_std_devs
+                torch.Size([49, 50, 200]) torch.Size([49, 50, 30])
+                torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
+                torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
+        """
+        # Create lists for hidden states
+        # (cannot use single tensor as buffer because autograd won't work with inplace writes)
+        T = actions.size(0) + 1
+        beliefs = [torch.empty(0)] * T
+        prior_states = [torch.empty(0)] * T
+        prior_means = [torch.empty(0)] * T
+        prior_std_devs = [torch.empty(0)] * T
+        posterior_states = [torch.empty(0)] * T
+        posterior_means = [torch.empty(0)] * T
+        posterior_std_devs = [torch.empty(0)] * T
+
+        beliefs[0], prior_states[0], posterior_states[0] = (
+            prev_belief,
+            prev_state,
+            prev_state,
+        )
+        # Loop over time sequence
+        for t in range(T - 1):
+            _state = (
+                prior_states[t] if observations is None else posterior_states[t]
+            )  # Select appropriate previous state
+            _state = (
+                _state if nonterminals is None else _state * nonterminals[t]
+            )  # Mask if previous transition was terminal
+            # Compute belief (deterministic hidden state)
+            hidden = self.fc_embed_state_action(
+                torch.cat([_state, actions[t]], dim=1)
+            )
+            
+            beliefs[t + 1] = self.rnn(hidden, beliefs[t])
+            # Compute state prior by applying transition dynamics
+            hidden = self.fc_embed_belief_prior(beliefs[t + 1])
+            prior_means[t + 1], _prior_std_dev = torch.chunk(
+                self.fc_state_prior(hidden), 2, dim=1
+            )
+            prior_std_devs[t + 1] = F.softplus(_prior_std_dev) + self.min_std_dev
+            prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[
+                t + 1
+            ] * torch.randn_like(prior_means[t + 1])
+            if observations is not None:
+                # Compute state posterior by applying transition dynamics and using
+                # current observation
+                t_ = t - 1  # Use t_ to deal with different time indexing for observations
+                hidden = self.fc_embed_belief_posterior(
+                        torch.cat([beliefs[t + 1], observations[t_ + 1]], dim=1)
+                )
+                posterior_means[t + 1], _posterior_std_dev = torch.chunk(
+                    self.fc_state_posterior(hidden), 2, dim=1
+                )
+                posterior_std_devs[t + 1] = (
+                    F.softplus(_posterior_std_dev) + self.min_std_dev
+                )
+                posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[
+                    t + 1
+                ] * torch.randn_like(posterior_means[t + 1])
+        # Return new hidden states
+        hidden = [
+            torch.stack(beliefs[1:], dim=0),
+            torch.stack(prior_states[1:], dim=0),
+            torch.stack(prior_means[1:], dim=0),
+            torch.stack(prior_std_devs[1:], dim=0),
+        ]
+        if observations is not None:
+            hidden += [
+                torch.stack(posterior_states[1:], dim=0),
+                torch.stack(posterior_means[1:], dim=0),
+                torch.stack(posterior_std_devs[1:], dim=0),
+            ]
+        return hidden
 
 
 class ObservationModel(nn.Module):
@@ -100,6 +239,104 @@ class RewardModel(nn.Module):
 
         return self.model(merge_belief_and_state(belief, state)).squeeze(dim=1)
 
+
+class CriticModel(nn.Module):
+    """
+    Critic model.
+    """
+
+    def __init__(
+        self,
+        belief_size: int,
+        state_size: int, 
+        hidden_size: int,
+        activation_function: Optional[str]="relu"
+    ) -> None:
+        super().__init__()
+        if isinstance(activation_function, str):
+            activation_function = getattr(F, activation_function)
+        self.model = nn.Sequential(
+            nn.Linear(belief_size + state_size, hidden_size),
+            activation_function,
+            nn.Linear(hidden_size, hidden_size),
+            activation_function,
+            nn.Linear(hidden_size, hidden_size),
+            activation_function,
+            nn.Linear(hidden_size, 1)
+        )
+        
+    def forward(self, belief, state):
+        """
+        Forward pass.
+        Input: belief, state
+        """
+
+        return self.model(merge_belief_and_state(belief, state)).squeeze(dim=1)
+
+
+class ActorModel(nn.Module):
+    """
+    Actor model.
+    """
+
+    def __init__(
+        self,
+        belief_size: int,
+        state_size: int,
+        hidden_size: int,
+        action_size: int,
+        activation_function: str="elu",
+        min_std: float=1e-4,
+        init_std: float=5,
+        mean_scale: float=5,
+    ):
+        super().__init__()
+        self.act_fn = getattr(F, activation_function)
+        self.fc1 = nn.Linear(belief_size + state_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, hidden_size)
+        self.fc4 = nn.Linear(hidden_size, hidden_size)
+        self.fc5 = nn.Linear(hidden_size, 2 * action_size)
+        self.modules = [self.fc1, self.fc2, self.fc3, self.fc4, self.fc5]
+
+        self._min_std = min_std
+        self._init_std = init_std
+        self._mean_scale = mean_scale
+
+    def forward(self, belief, state):
+        """
+        Forward pass.
+        Input: belief, state
+        """
+
+        raw_init_std = torch.log(torch.exp(self._init_std) - 1)
+        x = torch.cat([belief, state], dim=1)
+        hidden = self.act_fn(self.fc1(x))
+        hidden = self.act_fn(self.fc2(hidden))
+        hidden = self.act_fn(self.fc3(hidden))
+        hidden = self.act_fn(self.fc4(hidden))
+        action = self.fc5(hidden).squeeze(dim=1)
+
+        action_mean, action_std_dev = torch.chunk(action, 2, dim=1)
+        action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
+        action_std = F.softplus(action_std_dev + raw_init_std) + self._min_std
+        return action_mean, action_std
+
+    def get_action(self, belief, state, deterministic=False):
+        """
+        Get action.
+        """
+
+        action_mean, action_std = self.forward(belief, state)
+        dist = Normal(action_mean, action_std)
+        dist = TransformedDistribution(dist, TanhBijector())
+        dist = torch.distributions.Independent(dist, 1)
+        dist = SampleDist(dist)
+
+        if deterministic:
+            return dist.mode()
+
+        return dist.rsample()
 
 class CnnImageEncoder(nn.Module):
     """
@@ -262,7 +499,7 @@ class Dreamer(nn.Module):
     """
 
     def __init__(self):
-        super(DreamerV1, self).__init__()
+        super(Dreamer, self).__init__()
 
 
 class Planet(nn.Module):
