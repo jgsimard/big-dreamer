@@ -1,10 +1,12 @@
 import cv2
 import numpy as np
 import torch
+from gym import wrappers
+import os
 
 GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2',
             'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2',
-            'Walker2d-v2']
+            'Walker2d-v2', 'Pendulum-v1']
 CONTROL_SUITE_ENVS = ['cartpole-balance', 'cartpole-swingup', 'reacher-easy', 'finger-spin', 'cheetah-run',
                       'ball_in_cup-catch', 'walker-walk', 'reacher-hard', 'walker-run', 'humanoid-stand',
                       'humanoid-walk', 'fish-swim', 'acrobot-swingup']
@@ -102,7 +104,7 @@ class ControlSuiteEnv():
 
 
 class GymEnv():
-    def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
+    def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth, params):
         import gym
         self.symbolic = symbolic
         self._env = gym.make(env)
@@ -131,6 +133,7 @@ class GymEnv():
             if done:
                 break
         if self.symbolic:
+            print('symbolic')
             observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
         else:
             observation = _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
@@ -155,9 +158,15 @@ class GymEnv():
         return torch.from_numpy(self._env.action_space.sample())
 
 
-def Env(env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
+def Env(params):
+    env = params['env']
+    symbolic = params['symbolic_env']
+    seed = params['seed']
+    max_episode_length = params['max_episode_length']
+    action_repeat = params['action_repeat']
+    bit_depth = params['bit_depth']
     if env in GYM_ENVS:
-        return GymEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
+        return GymEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth, params)
     elif env in CONTROL_SUITE_ENVS:
         return ControlSuiteEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
 

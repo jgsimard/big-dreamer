@@ -73,17 +73,20 @@ class Planet(BaseAgent):
                                     device=utils.device)  # Allowed deviation in KL divergence
 
         # initialize the optimizers
-        self.model_optimizer, self.actor_optimizer, self.value_optimizer = None, None, None
+        self.model_optimizer = None
         self.initialize_optimizers()
 
         # load the models if possible
-        if params['models'] is not '' and os.path.exists(params['models']):
+        if params['models'] != '' and os.path.exists(params['models']):
             model_dicts = torch.load(params['models'])
-            self.transition_model.load_state_dict(model_dicts['transition_model'])
-            self.observation_model.load_state_dict(model_dicts['observation_model'])
-            self.reward_model.load_state_dict(model_dicts['reward_model'])
-            self.encoder.load_state_dict(model_dicts['encoder'])
-            self.model_optimizer.load_state_dict(model_dicts['model_optimizer'])
+            self.load(model_dicts)
+
+    def load(self, model_dicts):
+        self.transition_model.load_state_dict(model_dicts['transition_model'])
+        self.observation_model.load_state_dict(model_dicts['observation_model'])
+        self.reward_model.load_state_dict(model_dicts['reward_model'])
+        self.encoder.load_state_dict(model_dicts['encoder'])
+        self.model_optimizer.load_state_dict(model_dicts['model_optimizer'])
 
     def eval(self):
         self.transition_model.eval()
@@ -97,7 +100,18 @@ class Planet(BaseAgent):
         self.reward_model.train()
         self.encoder.train()
 
+    def state_dict(self):
+        return{
+            'transition_model': self.transition_model.state_dict(),
+            'observation_model': self.observation_model.state_dict(),
+            'reward_model': self.reward_model.state_dict(),
+            'encoder': self.encoder.state_dict(),
+            'model_optimizer': self.model_optimizer.state_dict()
+
+        }
+
     def randomly_initialize_replay_buffer(self) :
+        print('Collection random initial data...')
         total_steps = 0
         for s in range(1, self.seed_episodes + 1):
             done = False
@@ -112,6 +126,7 @@ class Planet(BaseAgent):
 
             total_steps += t * self.action_repeat
         self.env.close()
+        print('Collection random initial data...Done')
         return total_steps, s
 
     def initialize_models(self):

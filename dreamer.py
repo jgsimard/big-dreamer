@@ -34,6 +34,15 @@ class Dreamer(Planet):
         self.discount = params['discount']
         self.disclam = params['disclam']
 
+    def state_dict(self):
+        return{
+            'transition_model' : self.transition_model.state_dict(),
+            'observation_model' : self.observation_model.state_dict(),
+            'reward_model' : self.reward_model.state_dict(),
+            'encoder': self.encoder.state_dict(),
+
+        }
+
     def imagine_ahead(self, prev_state, prev_belief):
         '''
         imagine_ahead is the function to draw the imaginary tracjectory using the dynamics model, actor, critic.

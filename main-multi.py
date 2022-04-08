@@ -24,6 +24,101 @@ def my_main(cfg: DictConfig):
     my_app(cfg)
 
 
+def run_sub():
+    pass
+
+
+def run_data_collector(params, block=False, num_steps=(1e6)):
+    p = Process(target=data_collector,
+                daemon=True,
+                kwargs=dict(
+                    params=params,
+                    num_steps=num_steps))
+    p.start()
+    if block:
+        p.join()
+    return p
+
+
+def data_collector(params, num_steps):
+    print(f"Launching a data collection process")
+
+    #############
+    # Environment
+    #############
+
+    env = Env(params)
+
+    #############
+    # Model
+    #############
+
+    if params['algorithm'] == 'planet':
+        model = Planet(params, env)
+    elif params['algorithm'] == 'dreamer':
+        model = Dreamer(params, env)
+    elif params['algorithm'] == 'dreamerV2':
+        raise NotImplementedError('DreamerV2 is not yet implemented')
+    else:
+        raise NotImplementedError(f'algorithm {params["algorithm"]} is not yet implemented.')
+
+    steps = 0
+    last_model_load = 0
+    model_step = 0
+    num_episodes = 0
+
+    # environenment_steps = params['environenment_steps']
+
+    while steps < num_steps:
+        # load the model if necessary
+        if time.time() - last_model_load > last_model_load :
+            model_step = load_checkpoint()
+            if model_step:
+                print(f'Generator model checkpoint loaded')
+            else:
+                print(f'Generator model checkpoint NOT loaded')
+
+        # Collect One Episode
+        with torch.no_grad():
+            print("Data collection")
+            logs = {}
+            observation = env.reset()
+            total_reward = 0
+            belief = torch.zeros(1, params['belief_size'], device=device)
+            posterior_state = torch.zeros(1, params['state_size'], device=device)
+            action = torch.zeros(1, env.action_size, device=device)
+
+            pbar = tqdm(range(params['max_episode_length'] // params['action_repeat']))
+            for episode_step in pbar:
+                outputs = model.update_belief_and_act(
+                    env,
+                    belief,
+                    posterior_state,
+                    action,
+                    observation.to(device=device),
+                    explore=True)
+                belief, posterior_state, action, next_observation, reward, done = outputs
+
+                # store the new stuff
+                model.replay_buffer.append(observation, action, reward, done)
+
+                total_reward += reward
+                observation = next_observation
+
+                if params['render']:
+                    env.render()
+                if done:
+                    pbar.close()
+                    env.close()
+                    break
+
+            steps += episode_step * params['action_repeat']
+            num_episodes += 1
+            logs['episodique_total_reward'] = total_reward
+
+    print("Data Generation Done")
+
+
 def my_app(cfg: DictConfig):
     # print(OmegaConf.to_yaml(cfg))
     print("Command Dir:", os.getcwd())
@@ -75,19 +170,7 @@ def my_app(cfg: DictConfig):
     # ENV
     #############
 
-    env = Env(params['env'],
-              params['symbolic_env'],
-              params['seed'],
-              params['max_episode_length'],
-              params['action_repeat'],
-              params['bit_depth'], params)
-
-    # self.env = wrappers.Monitor(
-    #     self.env,
-    #     os.path.join(self.params['logdir'], "gym"),
-    #     force=True,
-    #     video_callable=(None if self.params['video_log_freq'] > 0 else False),
-    # )
+    env = Env(params)
 
     # simulation timestep, will be used for video saving
     if 'model' in dir(env):
@@ -116,80 +199,27 @@ def my_app(cfg: DictConfig):
     train_step = 0
 
     # Training
-    for episode in tqdm(range(num_episodes+1, params['episodes']+1), total=params['episodes'], initial=num_episodes+1):
+    print("Training loop")
+    for train_step in range(params['training_steps']):
+    # while True:
+    # for episode in tqdm(range(num_episodes+1, params['episodes']+1), total=params['episodes'], initial=num_episodes+1):
         # Model fitting
-        print("training loop")
-        for s in tqdm(range(params['collect_interval'])):
-            logs = model.train_step()
 
-            # Not sure we really want this?
-            # if train_step % params['log_freq'] == 0:
-            #     # perform the logging
-            #     for key, value in logs.items():
-            #         print('{} : {}'.format('Train_'+key, value))
-            #         logger.log_scalar(value, 'Train_'+key, train_step)
-            
-            #     logger.flush()
-
-            train_step += 1
-
-        ##########################
-        # Environment interaction
-        ##########################
-        print("Data collection")
-        with torch.no_grad():
-            observation = env.reset()
-            total_reward = 0
-            belief = torch.zeros(1, params['belief_size'], device=device)
-            posterior_state = torch.zeros(1, params['state_size'], device=device)
-            action = torch.zeros(1, env.action_size, device=device)
-
-            pbar = tqdm(range(params['max_episode_length'] // params['action_repeat']))
-            for t in pbar:
-                outputs = model.update_belief_and_act(
-                    env,
-                    belief,
-                    posterior_state,
-                    action,
-                    observation.to(device=device),
-                    explore=True)
-                belief, posterior_state, action, next_observation, reward, done = outputs
-
-                # store the new stuff
-                model.replay_buffer.append(observation, action, reward, done)
-
-                total_reward += reward
-                observation = next_observation
-
-                if params['render']:
-                    env.render()
-                if done:
-                    pbar.close()
-                    env.close()
-                    break
-
-            env_steps += t * params['action_repeat']
-            num_episodes += 1
-            logs['episodique_total_reward'] = total_reward
+        # for s in tqdm(range(params['collect_interval'])):
+        logs = model.train_step()
+        train_step += 1
 
         ##########################
         # Test model
         ##########################
 
         # TODO : Test Model
-        if episode % params['test_interval'] == 0:
+        if train_step % params['test_interval'] == 0:
             print("Test model")
             model.eval()
 
             # Initialise parallelised test environments
-            test_envs = EnvBatcher(Env, (params['env'],
-                                         params['symbolic_env'],
-                                         params['seed'],
-                                         params['max_episode_length'],
-                                         params['action_repeat'],
-                                         params['bit_depth'], params),
-                                   {},
-                                   params['test_episodes'])
+            test_envs = EnvBatcher(Env, (params), {}, params['test_episodes'])
 
             with torch.no_grad():
                 observation = test_envs.reset()
@@ -228,6 +258,11 @@ def my_app(cfg: DictConfig):
             test_envs.close()
 
         # TODO : Save Model
+        if train_step % params['checkpoint_interval']:
+            torch.save()
+
+
+
         if train_step % params['log_video_freq'] == 0 and params['log_video_freq']!=-1:
             # log eval videos
             logger.log_video(np.expand_dims(np.stack(video_frames), axis=0), name='Eval_rollout', step=train_step)
