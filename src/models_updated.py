@@ -6,7 +6,6 @@ from torch import nn, Tensor
 
 import torch.nn.functional as F
 import torch.distributions as D
-from torch.distributions.transformed_distribution import TransformedDistribution
 
 # from torch.nn.common_types import *
 
@@ -55,23 +54,23 @@ class TransitionModel(nn.Module):
 
         # general attibutes
         if isinstance(activation_function, str):
-            activation_function = getattr(F, activation_function)
+            activation_function = getattr(nn, activation_function)
         self.min_std_dev = min_std_dev
         # recurrent component
         self.rnn = nn.GRUCell(belief_size, belief_size)
         # model components
         self.fc_embed_state_action = nn.Sequential(
             nn.Linear(state_size + action_size, belief_size),
-            activation_function
+            activation_function()
         )
         self.fc_embed_belief_prior = nn.Sequential(
             nn.Linear(belief_size, hidden_size),
-            activation_function
+            activation_function()
         )
         self.fc_state_prior = nn.Linear(hidden_size, 2 * state_size)
         self.fc_embed_belief_posterior = nn.Sequential(
             nn.Linear(belief_size + embedding_size, hidden_size),
-            activation_function
+            activation_function()
         )
         self.fc_state_posterior = nn.Linear(hidden_size, 2 * state_size)
         self.modules = [
@@ -184,7 +183,7 @@ class ObservationModel(nn.Module):
         super().__init__()
 
         if isinstance(activation, str):
-            activation = getattr(F, activation)
+            activation = getattr(nn, activation)
 
         self.embedding_size = embedding_size
         self.linear = nn.Linear(belief_size + state_size, embedding_size)
@@ -224,7 +223,7 @@ class RewardModel(nn.Module):
         super().__init__()
 
         if isinstance(activation, str):
-            activation = getattr(F, activation)
+            activation = getattr(nn, activation)
 
         self.model = nn.Sequential(
             nn.Linear(belief_size + state_size, hidden_size),
@@ -256,14 +255,14 @@ class CriticModel(nn.Module):
     ) -> None:
         super().__init__()
         if isinstance(activation_function, str):
-            activation_function = getattr(F, activation_function)
+            activation_function = getattr(nn, activation_function)
         self.model = nn.Sequential(
             nn.Linear(belief_size + state_size, hidden_size),
-            activation_function,
+            activation_function(),
             nn.Linear(hidden_size, hidden_size),
-            activation_function,
+            activation_function(),
             nn.Linear(hidden_size, hidden_size),
-            activation_function,
+            activation_function(),
             nn.Linear(hidden_size, 1)
         )
         
@@ -293,17 +292,17 @@ class ActorModel(nn.Module):
         mean_scale: float=5,
     ) -> None:
         super().__init__()
-        if isinstance(activation_function):
-            activation_function = getattr(F, activation_function)
+        if isinstance(activation_function, str):
+            activation_function = getattr(nn, activation_function)
         self.module = nn.Sequential(
             nn.Linear(belief_size + state_size, hidden_size),
-            activation_function,
+            activation_function(),
             nn.Linear(hidden_size, hidden_size),
-            activation_function,
+            activation_function(),
             nn.Linear(hidden_size, hidden_size),
-            activation_function,
+            activation_function(),
             nn.Linear(hidden_size, hidden_size),
-            activation_function,
+            activation_function(),
             nn.Linear(hidden_size, 2 * action_size)
         )
 
@@ -320,28 +319,13 @@ class ActorModel(nn.Module):
         raw_init_std = torch.log(torch.exp(self._init_std) - 1)
 
         x = merge_belief_and_state(belief, state)
-        action = self.model(x).squeeze(dim=1)
+        action = self.module(x).squeeze(dim=1)
 
         action_mean, action_std_dev = torch.chunk(action, 2, dim=1)
         action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
         action_std = F.softplus(action_std_dev + raw_init_std) + self._min_std
         return action_mean, action_std
 
-    def get_action(self, belief, state, deterministic=False):
-        """
-        Get action.
-        """
-
-        action_mean, action_std = self.forward(belief, state)
-        dist = D.Normal(action_mean, action_std)
-        dist = TransformedDistribution(dist, TanhBijector())
-        dist = torch.distributions.Independent(dist, 1)
-        dist = SampleDist(dist)
-
-        if deterministic:
-            return dist.mode()
-
-        return dist.rsample()
 
 class CnnImageEncoder(nn.Module):
     """
@@ -352,7 +336,7 @@ class CnnImageEncoder(nn.Module):
         super().__init__()
 
         if isinstance(activation, str):
-            activation = getattr(F, activation)
+            activation = getattr(nn, activation)
 
         self.model = nn.Sequential(
             # in_channels, out_channels, kernel_size, stride

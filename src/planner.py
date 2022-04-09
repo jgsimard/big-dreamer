@@ -96,10 +96,3 @@ class MPCPlanner(jit.ScriptModule):
 
         # Return first action mean µ_t
         return action_mean[0].squeeze(dim=1)
-
-    def get_action(self, belief, posterior_state, deterministic=False):
-        """
-        Get action for the given belief and posterior state.
-        """
-
-        return self.forward(belief, posterior_state)

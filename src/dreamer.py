@@ -2,8 +2,11 @@ import torch
 from torch import optim, nn
 from torch.distributions import Normal
 from torch.nn import functional as F
+import torch.distributions as D
+from torch.distributions.transformed_distribution import TransformedDistribution
 
-from models import ActorModel, bottle, CriticModel
+
+from models_updated import ActorModel, bottle, CriticModel, TanhBijector, SampleDist
 from planet import Planet
 from utils import FreezeParameters, device
 
@@ -23,7 +26,7 @@ class Dreamer(Planet):
             self.hidden_size,
             self.action_size,
             self.dense_activation_function,
-        )).to(device)
+        ).to(device))
         self.planner = self.actor_model
 
         self.critic_model = torch.jit.script(CriticModel(
@@ -31,7 +34,7 @@ class Dreamer(Planet):
             self.state_size,
             self.hidden_size,
             self.dense_activation_function,
-        )).to(device)
+        ).to(device))
 
         self.actor_optimizer = optim.Adam(
             self.actor_model.parameters(),
@@ -77,18 +80,17 @@ class Dreamer(Planet):
         # Loop over time sequence
         for t in range(T - 1):
             _state = prior_states[t]
-            actions = self.planner.get_action(beliefs[t].detach(), _state.detach())
+            actions = self.get_action(beliefs[t].detach(), _state.detach())
             # Compute belief (deterministic hidden state)
-            hidden = self.transition_model.act_fn(
-                self.transition_model.fc_embed_state_action(
+            hidden = self.transition_model.fc_embed_state_action(
                     torch.cat([_state, actions], dim=1)
-                )
             )
             beliefs[t + 1] = self.transition_model.rnn(hidden, beliefs[t])
             # Compute state prior by applying transition dynamics
-            hidden = self.transition_model.act_fn(
-                self.transition_model.fc_embed_belief_prior(beliefs[t + 1])
+            hidden = self.transition_model.fc_embed_belief_prior(
+                beliefs[t + 1]
             )
+            
             prior_means[t + 1], _prior_std_dev = torch.chunk(
                 self.transition_model.fc_state_prior(hidden), 2, dim=1
             )
@@ -127,7 +129,7 @@ class Dreamer(Planet):
             imged_belief, imged_prior_state, _, _ = self.imagine_ahead(actor_states, actor_beliefs)
 
         # Predict Rewards & Values
-        with FreezeParameters(self.model_modules + self.critic_model.modules):
+        with FreezeParameters(self.model_modules + [self.critic_model]):
             imged_reward = bottle(
                 self.reward_model, (imged_belief, imged_prior_state)
             )
@@ -186,6 +188,22 @@ class Dreamer(Planet):
             self.update_actor_critic(self.posterior_states, self.beliefs)
         )  # dreamer addition
         return logs
+
+    def get_action(self, belief, state, deterministic=False):
+        """
+        Get action.
+        """
+
+        action_mean, action_std = self.planner(belief, state)
+        dist = D.Normal(action_mean, action_std)
+        dist = TransformedDistribution(dist, TanhBijector())
+        dist = torch.distributions.Independent(dist, 1)
+        dist = SampleDist(dist)
+
+        if deterministic:
+            return dist.mode()
+
+        return dist.rsample()
 
 
 def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.95):

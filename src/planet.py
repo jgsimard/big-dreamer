@@ -8,7 +8,7 @@ from torch.nn import functional as F
 import utils
 from env import EnvBatcher
 from memory import ExperienceReplay
-from models import TransitionModel, ObservationModel, RewardModel, Encoder, bottle
+from models_updated import TransitionModel, ObservationModel, RewardModel, CnnImageEncoder, bottle
 from planner import MPCPlanner
 from base_agent import BaseAgent
 
@@ -159,30 +159,26 @@ class Planet(BaseAgent):
             self.hidden_size,
             self.embedding_size,
             self.dense_activation_function,
-        )).to(device=utils.device)
+        ).to(device=utils.device))
 
         self.observation_model = torch.jit.script(ObservationModel(
-            self.symbolic_env,
-            self.observation_size,
             self.belief_size,
             self.state_size,
             self.embedding_size,
             self.cnn_activation_function,
-        )).to(device=utils.device)
+        ).to(device=utils.device))
 
         self.reward_model = torch.jit.script(RewardModel(
             self.belief_size,
             self.state_size,
             self.hidden_size,
             self.dense_activation_function,
-        )).to(device=utils.device)
+        ).to(device=utils.device))
 
-        self.encoder = Encoder(
-            self.symbolic_env,
-            self.observation_size,
+        self.encoder = torch.jit.script(CnnImageEncoder(
             self.embedding_size,
             self.cnn_activation_function,
-        ).to(device=utils.device)
+        ).to(device=utils.device))
 
         self.planner = MPCPlanner(
             self.action_size,
@@ -199,12 +195,12 @@ class Planet(BaseAgent):
         Initialize the optimizers.
         """
 
-        self.model_modules = (
-            self.transition_model.modules
-            + self.observation_model.modules
-            + self.reward_model.modules
-            + self.encoder.modules
-        )
+        self.model_modules = [
+            self.transition_model,
+            self.observation_model,
+            self.reward_model,
+            self.encoder,
+        ]
 
         self.model_params = (
             list(self.transition_model.parameters())
@@ -510,7 +506,7 @@ class Planet(BaseAgent):
         # Remove time dimension from belief/state
         belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)
         # Get action from planner(q(s_t|o≤t,a<t), p)
-        action = self.planner.get_action(
+        action = self.get_action(
             belief, posterior_state, deterministic=not explore
         )
         if explore:
@@ -525,3 +521,11 @@ class Planet(BaseAgent):
 
         # self.replay_buffer.append(observation, action, reward, done)
         return belief, posterior_state, action, next_observation, reward, done
+
+
+    def get_action(self, belief, posterior_state, deterministic=False):
+        """
+        Get action for the given belief and posterior state.
+        """
+
+        return self.planner(belief, posterior_state)
