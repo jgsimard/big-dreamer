@@ -152,30 +152,30 @@ class Planet(BaseAgent):
         Initialize the different models.
         """
         import ipdb; ipdb.set_trace()
-        self.transition_model = TransitionModel(
+        self.transition_model = torch.jit.script(TransitionModel(
             self.belief_size,
             self.state_size,
             self.action_size,
             self.hidden_size,
             self.embedding_size,
             self.dense_activation_function,
-        ).to(device=utils.device)
+        )).to(device=utils.device)
 
-        self.observation_model = ObservationModel(
+        self.observation_model = torch.jit.script(ObservationModel(
             self.symbolic_env,
             self.observation_size,
             self.belief_size,
             self.state_size,
             self.embedding_size,
             self.cnn_activation_function,
-        ).to(device=utils.device)
+        )).to(device=utils.device)
 
-        self.reward_model = RewardModel(
+        self.reward_model = torch.jit.script(RewardModel(
             self.belief_size,
             self.state_size,
             self.hidden_size,
             self.dense_activation_function,
-        ).to(device=utils.device)
+        )).to(device=utils.device)
 
         self.encoder = Encoder(
             self.symbolic_env,

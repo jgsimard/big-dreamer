@@ -617,21 +617,3 @@ class RSSM(nn.Module):
         priors = self.pri  # (T,B,2S)
 
         return (priors, posts, samples, states_h)
-
-
-class Dreamer(nn.Module):
-    """
-    Dreamer.
-    """
-
-    def __init__(self):
-        super(Dreamer, self).__init__()
-
-
-class Planet(nn.Module):
-    """
-    Planet.
-    """
-
-    def __init__(self):
-        super(Planet, self).__init__()

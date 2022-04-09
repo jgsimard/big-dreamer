@@ -17,21 +17,21 @@ class Dreamer(Planet):
     def __init__(self, params, env):
         super(Dreamer, self).__init__(params, env)
 
-        self.actor_model = ActorModel(
+        self.actor_model = torch.jit.script(ActorModel(
             self.belief_size,
             self.state_size,
             self.hidden_size,
             self.action_size,
             self.dense_activation_function,
-        ).to(device)
+        )).to(device)
         self.planner = self.actor_model
 
-        self.critic_model = CriticModel(
+        self.critic_model = torch.jit.script(CriticModel(
             self.belief_size,
             self.state_size,
             self.hidden_size,
             self.dense_activation_function,
-        ).to(device)
+        )).to(device)
 
         self.actor_optimizer = optim.Adam(
             self.actor_model.parameters(),
