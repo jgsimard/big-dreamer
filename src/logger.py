@@ -16,7 +16,8 @@ class Logger:
         print("logging outputs to ", log_dir)
         print("########################")
         self._n_logged_samples = n_logged_samples
-        self._summ_writer = SummaryWriter(log_dir, flush_secs=1, max_queue=1)
+        self._summ_writer = SummaryWriter(log_dir, flush_secs=1, max_queue=1) \
+            if summary_writer is None else summary_writer
 
         if self.params["wandb_project"] is not None:
             wandb.init(project=params["wandb_project"], entity="big-dreamer")
@@ -27,9 +28,9 @@ class Logger:
         Log a scalar value.
         """
 
-        self._summ_writer.add_scalar("{}".format(name), scalar, step_)
+        self._summ_writer.add_scalar(f"{name}", scalar, step_)
         if self.params["wandb_project"] is not None:
-            wandb.log({"{}".format(name): scalar}, step=step_)
+            wandb.log({f"{name}": scalar}, step=step_)
 
     def log_scalars(self, scalar_dict, group_name, step, phase):
         """
@@ -37,7 +38,7 @@ class Logger:
         """
 
         self._summ_writer.add_scalars(
-            "{}_{}".format(group_name, phase), scalar_dict, step
+            f"{group_name}_{phase}", scalar_dict, step
         )
 
     def log_image(self, image, name, step):
@@ -46,7 +47,7 @@ class Logger:
         """
 
         assert len(image.shape) == 3  # [C, H, W]
-        self._summ_writer.add_image("{}".format(name), image, step)
+        self._summ_writer.add_image(f"{name}", image, step)
 
     def log_video(self, video_frames, name, step, fps=10):
         """
@@ -56,7 +57,7 @@ class Logger:
         assert (
             len(video_frames.shape) == 5
         ), "Need [N, T, C, H, W] input tensor for video logging!"
-        self._summ_writer.add_video("{}".format(name), video_frames, step, fps=fps)
+        self._summ_writer.add_video(f"{name}", video_frames, step, fps=fps)
 
     def log_paths_as_videos(
         self, paths, step, max_videos_to_save=2, fps=10, video_title="video"
@@ -95,22 +96,23 @@ class Logger:
         assert (
             figure.shape[0] > 0
         ), "Figure logging requires input shape [batch x figures]!"
-        self._summ_writer.add_figure("{}_{}".format(name, phase), figure, step)
+        self._summ_writer.add_figure(f"{name}_{phase}", figure, step)
 
     def log_figure(self, figure, name, step, phase):
         """
         figure: matplotlib.pyplot figure handle.
         """
 
-        self._summ_writer.add_figure("{}_{}".format(name, phase), figure, step)
+        self._summ_writer.add_figure(f"{name}_{phase}", figure, step)
 
     def log_graph(self, array, name, step, phase):
         """
         figure: matplotlib.pyplot figure handle
         """
-
+        def plot_graph(array):
+            raise NotImplementedError()
         im = plot_graph(array)
-        self._summ_writer.add_image("{}_{}".format(name, phase), im, step)
+        self._summ_writer.add_image(f"{name}_{phase}", im, step)
 
     def dump_scalars(self, log_path=None):
         """

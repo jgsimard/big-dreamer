@@ -1,14 +1,10 @@
 from typing import Dict
 
 
-class BaseAgent(object):
+class BaseAgent:
     """
     Base class for agents.
     """
-
-    def __init__(self, **kwargs):
-        super(BaseAgent, self).__init__(**kwargs)
-
     def train(self) -> Dict[str, float]:
         """
         Return a dictionary of logging information.

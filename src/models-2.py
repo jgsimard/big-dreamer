@@ -6,7 +6,7 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 import torch.distributions as D
 
-from torch.nn.common_types import *
+# from torch.nn.common_types import *
 
 Activation = Union[str, nn.Module]
 
@@ -18,14 +18,14 @@ def merge_belief_and_state(belief: Tensor, state: Tensor) -> Tensor:
 
     return torch.cat([belief, state], dim=1)
 
-
-class TransitionModel(nn.Module):
-    """
-    Transition model.
-    """
-
-    def __init__(self) -> None:
-        super(TransitionModel, self).__init__()
+# TODO
+# class TransitionModel(nn.Module):
+#     """
+#     Transition model.
+#     """
+#
+#     def __init__(self) -> None:
+#         super().__init__()
 
 
 class ObservationModel(nn.Module):
@@ -40,21 +40,21 @@ class ObservationModel(nn.Module):
         embedding_size: int,
         activation: Activation = "relu",
     ) -> None:
-        super(ObservationModel, self).__init__()
+        super().__init__()
 
         if isinstance(activation, str):
-            activation = getattr(F, activation)()
+            activation = getattr(F, activation)
 
         self.embedding_size = embedding_size
         self.linear = nn.Linear(belief_size + state_size, embedding_size)
         self.deconvs = nn.Sequential(
             # in_channels, out_channels, kernel_size, stride: _size_2_t = 1
             nn.ConvTranspose2d(embedding_size, 128, 5, 2),
-            activation,
+            activation(),
             nn.ConvTranspose2d(128, 64, 5, 2),
-            activation,
+            activation(),
             nn.ConvTranspose2d(64, 32, 6, 2),
-            activation,
+            activation(),
             nn.ConvTranspose2d(32, 3, 6, 2),
         )
 
@@ -80,16 +80,16 @@ class RewardModel(nn.Module):
         hidden_size: int,
         activation: Activation = "relu",
     ) -> None:
-        super(RewardModel, self).__init__()
+        super().__init__()
 
         if isinstance(activation, str):
-            activation = getattr(F, activation)()
+            activation = getattr(F, activation)
 
         self.model = nn.Sequential(
             nn.Linear(belief_size + state_size, hidden_size),
-            activation,
+            activation(),
             nn.Linear(hidden_size, hidden_size),
-            activation,
+            activation(),
             nn.Linear(hidden_size, 1),
         )
 
@@ -107,21 +107,21 @@ class CnnImageEncoder(nn.Module):
     """
 
     def __init__(self, embedding_size: int, activation: Activation = "relu") -> None:
-        super(CnnImageEncoder, self).__init__()
+        super().__init__()
 
         if isinstance(activation, str):
-            activation = getattr(F, activation)()
+            activation = getattr(F, activation)
 
         self.model = nn.Sequential(
             # in_channels, out_channels, kernel_size, stride
             nn.Conv2d(3, 32, 4, 2),
-            activation,
+            activation(),
             nn.Conv2d(32, 64, 4, 2),
-            activation,
+            activation(),
             nn.Conv2d(64, 128, 4, 2),
-            activation,
+            activation(),
             nn.Conv2d(128, 256, 4, 2),  # (B, 3, H, W) ->  (B, 256, H/16, W/16)
-            activation,
+            activation(),
             nn.Flatten(),
             nn.Identity()
             if embedding_size == 1024
@@ -141,10 +141,10 @@ class LinearCombination(nn.Module):
     Linear combination of two inputs.
     """
 
-    def __init__(self, in1_size, in2_size, out_size):
-        super(LinearCombination, self).__init__()
+    def __init__(self, in1_size: int, in2_size: int, out_size: int):
+        super().__init__()
         self.in1_linear = nn.Linear(in1_size, out_size)
-        self.in2_linear = nn.Linear(in2_size, bias=False)
+        self.in2_linear = nn.Linear(in2_size, out_size, bias=False)
 
     def forward(self, in1, in2):
         """
@@ -154,7 +154,7 @@ class LinearCombination(nn.Module):
         return self.in1_linear(in1) + self.in1_linear(in2)
 
 
-def activation(x, layer_norm=False):
+def activation_(x, layer_norm=False):
     """
     Activation function.
     """
@@ -188,7 +188,7 @@ class RSSM(nn.Module):
         hidden_size: int,
         rnn_layers: int,
     ):
-        super(RSSM, self).__init__()
+        super().__init__()
         self.rnn = nn.GRU(
             input_size=hidden_size,
             hidden_size=deterministic_size,
@@ -212,13 +212,13 @@ class RSSM(nn.Module):
         Prior.
         """
 
-        return self.prior_out(activation(self.prior_h(h)))
+        return self.prior_out(activation_(self.prior_h(h)))
 
     def forward(
         self,
         embedded: Tensor,  # (T, B, embedding_size)
         action: Tensor,  # (T, B, action_size)
-        reset: Tensor,  # (T, B)
+        # reset: Tensor,  # (T, B)
         z_in: Tensor,  # (T, B, stochastic_size)
         h_in: Tensor,  # (T, B, deterministic_size)
     ):
@@ -230,11 +230,11 @@ class RSSM(nn.Module):
         posts = []
         states_h = []
         samples = []
-
+        T = action.shape[0]
         for _ in range(T):
-            za = activation(self.za_combination(z_in, action))
+            za = activation_(self.za_combination(z_in, action))
             h_out = self.rnn(za, h_in)
-            he = activation(self.he_combination(h_out, embedded))
+            he = activation_(self.he_combination(h_out, embedded))
             posterior_parameters = self.posterior_parameters(he)
             posterior_distribution = diag_normal(posterior_parameters)
             sample = posterior_distribution.rsample().reshape(action.shape[0], -1)
@@ -253,22 +253,22 @@ class RSSM(nn.Module):
         samples = torch.stack(samples)  # (T,B,S)
         priors = self.pri  # (T,B,2S)
 
-        return (priors, posts, samples, states_h)
+        return priors, posts, samples, states_h
 
-
-class Dreamer(nn.Module):
-    """
-    Dreamer.
-    """
-
-    def __init__(self):
-        super(DreamerV1, self).__init__()
-
-
-class Planet(nn.Module):
-    """
-    Planet.
-    """
-
-    def __init__(self):
-        super(Planet, self).__init__()
+# TODO
+# class Dreamer(nn.Module):
+#     """
+#     Dreamer.
+#     """
+#
+#     def __init__(self):
+#         super().__init__()
+#
+#
+# class Planet(nn.Module):
+#     """
+#     Planet.
+#     """
+#
+#     def __init__(self):
+#         super().__init__()
