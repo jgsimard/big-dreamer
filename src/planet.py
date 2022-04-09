@@ -151,7 +151,7 @@ class Planet(BaseAgent):
         """
         Initialize the different models.
         """
-        import ipdb; ipdb.set_trace()
+        
         self.transition_model = torch.jit.script(TransitionModel(
             self.belief_size,
             self.state_size,
