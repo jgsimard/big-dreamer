@@ -1,10 +1,12 @@
 from typing import Union, Optional, List
 
+import numpy as np
 import torch
 from torch import nn, Tensor
 
 import torch.nn.functional as F
 import torch.distributions as D
+from torch.distributions.transformed_distribution import TransformedDistribution
 
 from torch.nn.common_types import *
 
@@ -289,15 +291,21 @@ class ActorModel(nn.Module):
         min_std: float=1e-4,
         init_std: float=5,
         mean_scale: float=5,
-    ):
+    ) -> None:
         super().__init__()
-        self.act_fn = getattr(F, activation_function)
-        self.fc1 = nn.Linear(belief_size + state_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, hidden_size)
-        self.fc4 = nn.Linear(hidden_size, hidden_size)
-        self.fc5 = nn.Linear(hidden_size, 2 * action_size)
-        self.modules = [self.fc1, self.fc2, self.fc3, self.fc4, self.fc5]
+        if isinstance(activation_function):
+            activation_function = getattr(F, activation_function)
+        self.module = nn.Sequential(
+            nn.Linear(belief_size + state_size, hidden_size),
+            activation_function,
+            nn.Linear(hidden_size, hidden_size),
+            activation_function,
+            nn.Linear(hidden_size, hidden_size),
+            activation_function,
+            nn.Linear(hidden_size, hidden_size),
+            activation_function,
+            nn.Linear(hidden_size, 2 * action_size)
+        )
 
         self._min_std = min_std
         self._init_std = init_std
@@ -310,12 +318,9 @@ class ActorModel(nn.Module):
         """
 
         raw_init_std = torch.log(torch.exp(self._init_std) - 1)
-        x = torch.cat([belief, state], dim=1)
-        hidden = self.act_fn(self.fc1(x))
-        hidden = self.act_fn(self.fc2(hidden))
-        hidden = self.act_fn(self.fc3(hidden))
-        hidden = self.act_fn(self.fc4(hidden))
-        action = self.fc5(hidden).squeeze(dim=1)
+
+        x = merge_belief_and_state(belief, state)
+        action = self.model(x).squeeze(dim=1)
 
         action_mean, action_std_dev = torch.chunk(action, 2, dim=1)
         action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
@@ -328,7 +333,7 @@ class ActorModel(nn.Module):
         """
 
         action_mean, action_std = self.forward(belief, state)
-        dist = Normal(action_mean, action_std)
+        dist = D.Normal(action_mean, action_std)
         dist = TransformedDistribution(dist, TanhBijector())
         dist = torch.distributions.Independent(dist, 1)
         dist = SampleDist(dist)
@@ -389,6 +394,127 @@ class LinearCombination(nn.Module):
         """
 
         return self.in1_linear(in1) + self.in1_linear(in2)
+
+# "atanh", "TanhBijector" and "SampleDist" are from the following repo
+# https://github.com/juliusfrost/dreamer-pytorch
+def atanh(x):
+    """
+    Inverse hyperbolic tangent.
+    """
+
+    return 0.5 * torch.log((1 + x) / (1 - x))
+
+
+class TanhBijector(torch.distributions.Transform):
+    """
+    Bijector for the tanh function.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.bijective = True
+        self.domain = torch.distributions.constraints.real
+        self.codomain = torch.distributions.constraints.interval(-1.0, 1.0)
+
+    @property
+    def sign(self):
+        """
+        Sign of the bijector.
+        """
+        return 1.0
+
+    def _call(self, x):
+        """
+        Forward pass.
+        Input: x
+        """
+
+        return torch.tanh(x)
+
+    def _inverse(self, y: torch.Tensor):
+        """
+        Inverse pass.
+        Input: y
+        """
+
+        y = torch.where(
+            (torch.abs(y) <= 1.0), torch.clamp(y, -0.99999997, 0.99999997), y
+        )
+        y = atanh(y)
+        return y
+
+    def log_abs_det_jacobian(self, x, y):
+        """
+        Log of the absolute determinant of the Jacobian.
+        """
+
+        return 2.0 * (np.log(2) - x - F.softplus(-2.0 * x))
+
+class SampleDist:
+    """
+    Sample from a distribution.
+    """
+
+    def __init__(self, dist, samples=100):
+        self._dist = dist
+        self._samples = samples
+
+    @property
+    def name(self):
+        """
+        Name of the distribution.
+        """
+
+        return "SampleDist"
+
+    def __getattr__(self, name):
+        """
+        Get an attribute.
+        """
+
+        return getattr(self._dist, name)
+
+    def mean(self):
+        """
+        Mean of the distribution.
+        """
+        # TODO: need to be defined. Is dist here supposed to be _dist?
+        sample = self._dist.rsample()
+        return torch.mean(sample, 0)
+
+    def mode(self):
+        """
+        Mode of the distribution.
+        """
+
+        dist = self._dist.expand((self._samples, *self._dist.batch_shape))
+        sample = dist.rsample()
+        logprob = dist.log_prob(sample)
+        batch_size = sample.size(1)
+        feature_size = sample.size(2)
+        indices = (
+            torch.argmax(logprob, dim=0)
+            .reshape(1, batch_size, 1)
+            .expand(1, batch_size, feature_size)
+        )
+        return torch.gather(sample, 0, indices).squeeze(0)
+
+    def entropy(self):
+        """
+        Entropy of the distribution.
+        """
+
+        dist = self._dist.expand((self._samples, *self._dist.batch_shape))
+        sample = dist.rsample()
+        logprob = dist.log_prob(sample)
+        return -torch.mean(logprob, 0)
+
+    def sample(self):
+        """
+        Sample from the distribution.
+        """
+
+        return self._dist.sample()
 
 
 def activation(x, layer_norm=False):
