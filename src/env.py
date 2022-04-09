@@ -2,6 +2,10 @@ import cv2
 import numpy as np
 import torch
 
+import gym
+from dm_control import suite
+from dm_control.suite.wrappers import pixels
+
 GYM_ENVS = [
     "Pendulum-v0",
     "MountainCarContinuous-v0",
@@ -90,9 +94,6 @@ class ControlSuiteEnv:
     def __init__(
         self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth
     ):
-        from dm_control import suite
-        from dm_control.suite.wrappers import pixels
-
         domain, task = env.split("-")
         self.symbolic = symbolic
         self._env = suite.load(
@@ -231,8 +232,6 @@ class GymEnv:
     def __init__(
         self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth
     ):
-        import gym
-
         self.symbolic = symbolic
         self._env = gym.make(env)
         self._env.seed(seed)
@@ -383,5 +382,4 @@ class EnvBatcher:
         """
         Closes the environment.
         """
-
-        [env.close() for env in self.envs]
+        return [env.close() for env in self.envs]

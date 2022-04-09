@@ -15,7 +15,7 @@ class Dreamer(Planet):
     """
 
     def __init__(self, params, env):
-        super(Dreamer, self).__init__(params, env)
+        super().__init__(params, env)
 
         self.actor_model = ActorModel(
             self.belief_size,
@@ -124,19 +124,14 @@ class Dreamer(Planet):
             actor_beliefs = beliefs.detach()
 
         with FreezeParameters(self.model_modules):
-            (
-                imged_beliefs,
-                imged_prior_states,
-                imged_prior_means,
-                imged_prior_std_devs,
-            ) = self.imagine_ahead(actor_states, actor_beliefs)
+            imged_belief, imged_prior_state, _, _ = self.imagine_ahead(actor_states, actor_beliefs)
 
         # Predict Rewards & Values
         with FreezeParameters(self.model_modules + self.critic_model.modules):
             imged_reward = bottle(
-                self.reward_model, (imged_beliefs, imged_prior_states)
+                self.reward_model, (imged_belief, imged_prior_state)
             )
-            value_pred = bottle(self.critic_model, (imged_beliefs, imged_prior_states))
+            value_pred = bottle(self.critic_model, (imged_belief, imged_prior_state))
 
         # Compute Values estimates
         returns = lambda_return(
@@ -159,8 +154,8 @@ class Dreamer(Planet):
         self.actor_optimizer.step()
 
         with torch.no_grad():
-            value_beliefs = imged_beliefs.detach()
-            value_prior_states = imged_prior_states.detach()
+            value_beliefs = imged_belief.detach()
+            value_prior_states = imged_prior_state.detach()
             target_return = returns.detach()
         # detach the input tensor from the transition network.
         value_dist = Normal(
@@ -183,7 +178,7 @@ class Dreamer(Planet):
         ####################
         # DYNAMICS LEARNING
         ####################
-        logs = super(Dreamer, self).train_step()  # planet
+        logs = super().train_step()  # planet
         ####################
         # BEHAVIOUR LEARNING
         ####################

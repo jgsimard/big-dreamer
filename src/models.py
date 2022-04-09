@@ -551,7 +551,7 @@ class SampleDist:
         Mean of the distribution.
         """
         # TODO: need to be defined. Is dist here supposed to be _dist?
-        sample = dist.rsample()
+        sample = self._dist.rsample()
         return torch.mean(sample, 0)
 
     def mode(self):

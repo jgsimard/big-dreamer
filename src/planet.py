@@ -98,7 +98,7 @@ class Planet(BaseAgent):
         self.initialize_optimizers()
 
         # load the models if possible
-        if params["models"] is not "" and os.path.exists(params["models"]):
+        if params["models"] != "" and os.path.exists(params["models"]):
             model_dicts = torch.load(params["models"])
             self.transition_model.load_state_dict(model_dicts["transition_model"])
             self.observation_model.load_state_dict(model_dicts["observation_model"])

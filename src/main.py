@@ -4,7 +4,7 @@ import time
 import hydra
 import numpy as np
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, open_dict
 from tqdm import tqdm
 from torchvision.utils import make_grid
 
@@ -16,15 +16,7 @@ from utils import init_gpu, device
 
 
 @hydra.main(config_path="conf", config_name="config")
-def my_main(cfg: DictConfig):
-    """
-    Main function for running the experiments.
-    """
-
-    my_app(cfg)
-
-
-def my_app(cfg: DictConfig):
+def my_app(cfg: DictConfig) -> None:
     """
     Main function for running the experiments.
     """
@@ -41,26 +33,16 @@ def my_app(cfg: DictConfig):
     # ##################################
     # ### CREATE DIRECTORY FOR LOGGING
     # ##################################
-    logdir_prefix = "project_"  # keep for autograder
-
     data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
 
     if not os.path.exists(data_path):
         os.makedirs(data_path)
 
-    logdir = (
-        logdir_prefix
-        + cfg.exp_name
-        + "_"
-        + cfg.env
-        + "_"
-        + time.strftime("%d-%m-%Y_%H-%M-%S")
-    )
-    logdir = os.path.join(data_path, logdir)
+    logdir = os.path.join(data_path,
+                          f'project_{cfg.exp_name}_{cfg.env}_{time.strftime("%d-%m-%Y_%H-%M-%S")}')
     params["logdir"] = logdir
     if not os.path.exists(logdir):
         os.makedirs(logdir)
-    from omegaconf import open_dict
 
     with open_dict(cfg):
         cfg.logdir = logdir
@@ -155,6 +137,7 @@ def my_app(cfg: DictConfig):
             action = torch.zeros(1, env.action_size, device=device)
 
             pbar = tqdm(range(params["max_episode_length"] // params["action_repeat"]))
+            t = 0
             for t in pbar:
                 outputs = model.update_belief_and_act(
                     env,
@@ -295,7 +278,7 @@ def my_app(cfg: DictConfig):
             print("Perform Logging")
             # perform the logging
             for key, value in logs.items():
-                print("{} : {}".format(key, value))
+                print(f"{key} : {value}")
                 logger.log_scalar(value, key, env_steps)  # should this be train_step?
             print("Done logging...\n")
 
@@ -309,4 +292,4 @@ if __name__ == "__main__":
     import os
 
     print("Command Dir:", os.getcwd())
-    my_main()
+    my_app()
