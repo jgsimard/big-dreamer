@@ -6,8 +6,8 @@ env: 'Pendulum-v0'
 symbolic_env: False
 max_episode_length: 1000
 experience_size: 1000000   # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
-cnn_activation_function: 'relu'
-dense_activation_function: 'elu'
+cnn_activation_function: 'ReLU'
+dense_activation_function: 'ELU'
 embedding_size: 1024  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
 hidden_size: 200
 belief_size: 200
@@ -49,4 +49,4 @@ experience_replay: ''
 render: False
 log_freq : 1
 log_video_freq : -1
-wandb_project : 'test-project' # write null here for not using WandB
+wandb_project : null # 'test-project'
