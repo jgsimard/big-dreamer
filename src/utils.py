@@ -10,6 +10,7 @@ from plotly.graph_objs.scatter import Line
 from torch.nn import Module
 from torch import Tensor
 
+
 def cat(x: Tensor, y: Tensor) -> Tensor:
     """
     Concatenate x and y along the channel dimension
@@ -200,28 +201,6 @@ class FreezeParameters:
 
 
 ## from the homeworks
-
-
-class classproperty:
-    """
-    Decorator to make a class property.
-    """
-
-    def __init__(self, f):
-        """
-        Decorator to enable access to properties of both classes and instances of classes.
-
-        :param f:
-        :returns:
-        :rtype:
-        """
-
-        self.f = f
-
-    def __get__(self, obj, owner):
-        return self.f(owner)
-
-
 device = None
 
 
@@ -234,7 +213,8 @@ def init_gpu(use_gpu=True, gpu_id=0):
     :return: None
     """
 
-    global device
+    global device  # pylint: disable=global-statement
+
     if torch.cuda.is_available() and use_gpu:
         device = torch.device("cuda:" + str(gpu_id))
         print(f"Using GPU id {gpu_id}")
@@ -266,25 +246,18 @@ def to_numpy(tensor):
     return tensor.to("cpu").detach().numpy()
 
 
-class Flatten(torch.nn.Module):
-    """
-    Flatten a tensor.
-    """
-
-    def forward(self, x):
-        """
-        Flatten a tensor.
-        :param x: tensor to flatten.
-        """
-
-        batch_size = x.shape[0]
-        return x.view(batch_size, -1)
-
-
 def preprocess_observation_(observation, bit_depth) -> None:
     """
     Preprocesses an observation inplace.
     (from float32 Tensor [0, 255] to [-0.5, 0.5])
+
+    Args:
+        observation: the observation to preprocess.
+        bit_depth: the bit depth of the observation
+
+    Returns:
+        None
+
     """
 
     # Quantise to given bit depth and centre
@@ -298,6 +271,13 @@ def postprocess_observation(observation, bit_depth) -> np.ndarray:
     """
     Postprocess an observation for storage.
     (from float32 numpy array [-0.5, 0.5] to uint8 numpy array [0, 255])
+
+    Args:
+        observation: observation to process
+        bit_depth: bit depth to quantise to
+
+    Returns:
+        np.ndarray: postprocessed observation
     """
 
     return np.clip(
@@ -308,9 +288,23 @@ def postprocess_observation(observation, bit_depth) -> np.ndarray:
 
 
 def images_to_observation(images, bit_depth, observation_shape) -> np.ndarray:
+    """
+    Converts a list of images to a single observation.
+
+    Args:
+        images: list of images
+        bit_depth: bit depth of the images
+        observation_shape: shape of the observation
+
+    Returns:
+        observation: observation
+    """
+
     # Resize and put channel first
     images = torch.tensor(
-        cv2.resize(images, observation_shape, interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1),
+        cv2.resize(images, observation_shape, interpolation=cv2.INTER_LINEAR).transpose(
+            2, 0, 1
+        ),
         dtype=torch.float32,
     )
 

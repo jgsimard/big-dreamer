@@ -13,19 +13,21 @@ from utils import cat
 Activation = Union[str, nn.Module]
 
 
-def bottle(
-        f,
-        x_tuple: tuple  # (belief, posterior_states)
-) -> Tensor:  # shape: (belief[0].size(), belief[1].size(), *f().size()[1:])
+def bottle(f, x_tuple: tuple) -> Tensor:
     """
     Wraps the input tuple for a function to process a time x batch x features sequence in
     batch x features (assumes one output)
+
+    Args:
+        f: function to apply to the input tuple
+        x_tuple (Tuple[belief, posterior_states]): tuple of tensors (belief, posterior_states)
+
+    Returns:
+        Tensor: output of f() of shape: (belief[0].size(), belief[1].size(), *f().size()[1:])
     """
 
     x_sizes = tuple([x.size() for x in x_tuple])
-    y = f(
-        *[x[0].view(x[1][0] * x[1][1], *x[1][2:]) for x in zip(x_tuple, x_sizes)]
-    )
+    y = f(*[x[0].view(x[1][0] * x[1][1], *x[1][2:]) for x in zip(x_tuple, x_sizes)])
     y_size = y.size()
     output = y.view(x_sizes[0][0], x_sizes[0][1], *y_size[1:])
 
@@ -33,6 +35,10 @@ def bottle(
 
 
 class BeliefModel(nn.Module):
+    """
+    Belief model
+    """
+
     def __init__(self, input_size, hidden_size, state_size, activation, min_std_dev):
         super().__init__()
         self.min_std_dev = min_std_dev
@@ -40,6 +46,14 @@ class BeliefModel(nn.Module):
         self.state_fc = nn.Linear(hidden_size, 2 * state_size)
 
     def forward(self, belief):
+        """
+        Args:
+            belief (Tensor): belief of shape: (batch_size, belief_size)
+
+        Returns:
+            Tensor: belief of shape: (batch_size, belief_size)
+        """
+
         hidden = self.belief_fc(belief)
         mean, _std_dev = torch.chunk(self.state_fc(hidden), 2, dim=1)
         std_dev = F.softplus(_std_dev) + self.min_std_dev
@@ -73,25 +87,24 @@ class TransitionModel(nn.Module):
 
         # model components
         self.fc_embed_state_action = nn.Sequential(
-            nn.Linear(state_size + action_size, belief_size), 
-            activation()
+            nn.Linear(state_size + action_size, belief_size), activation()
         )
 
-        self.belief_prior = BeliefModel(belief_size,
-                                        hidden_size,
-                                        state_size,
-                                        activation,
-                                        min_std_dev)
-        self.belief_posterior = BeliefModel(belief_size + embedding_size,
-                                            hidden_size,
-                                            state_size,
-                                            activation,
-                                            min_std_dev)
+        self.belief_prior = BeliefModel(
+            belief_size, hidden_size, state_size, activation, min_std_dev
+        )
+        self.belief_posterior = BeliefModel(
+            belief_size + embedding_size,
+            hidden_size,
+            state_size,
+            activation,
+            min_std_dev,
+        )
 
         self.modules = [
             self.fc_embed_state_action,
             self.belief_prior,
-            self.belief_posterior
+            self.belief_posterior,
         ]
 
     def forward(
@@ -119,7 +132,7 @@ class TransitionModel(nn.Module):
             posterior_means:    (L-1, B, S)
             posterior_std_devs: (L-1, B, S)
         """
- 
+
         # Create lists for hidden states
         # (cannot use single tensor as buffer because autograd won't work with inplace writes)
         T = actions.size(0) + 1
@@ -138,24 +151,38 @@ class TransitionModel(nn.Module):
         # Loop over time sequence
         for t in range(T - 1):
             # Select appropriate previous state
-            _state = (prior_states[t] if observations is None else posterior_states[t])
+            _state = prior_states[t] if observations is None else posterior_states[t]
 
             # Mask if previous transition was terminal
-            _state = (_state if nonterminals is None else _state * nonterminals[t])
+            _state = _state if nonterminals is None else _state * nonterminals[t]
 
             # Compute belief (deterministic hidden state)
             hidden = self.fc_embed_state_action(cat(_state, actions[t]))
             beliefs[t + 1] = self.rnn(hidden, beliefs[t])
 
             # Compute state prior by applying transition dynamics
-            prior_means[t + 1], prior_std_devs[t + 1] = self.belief_prior(beliefs[t + 1])
-            prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])
+            prior_means[t + 1], prior_std_devs[t + 1] = self.belief_prior(
+                beliefs[t + 1]
+            )
+            prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[
+                t + 1
+            ] * torch.randn_like(prior_means[t + 1])
 
             if observations is not None:
-                # Compute state posterior by applying transition dynamics and using current observation
-                t_ = t - 1  # Use t_ to deal with different time indexing for observations
-                posterior_means[t + 1], posterior_std_devs[t + 1] = self.belief_posterior(cat(beliefs[t + 1], observations[t_ + 1]))
-                posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[t + 1] * torch.randn_like(posterior_means[t + 1])
+                # Compute state posterior by applying transition dynamics and using
+                # current observation.
+
+                t_ = (
+                    t - 1
+                )  # Using t_ to deal with different time indexing for observations
+
+                (
+                    posterior_means[t + 1],
+                    posterior_std_devs[t + 1],
+                ) = self.belief_posterior(cat(beliefs[t + 1], observations[t_ + 1]))
+                posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[
+                    t + 1
+                ] * torch.randn_like(posterior_means[t + 1])
 
         # Return new hidden states
         hidden = [
@@ -174,11 +201,19 @@ class TransitionModel(nn.Module):
 
 
 class Reshape(nn.Module):
+    """
+    Reshape module for PyTorch.
+    """
+
     def __init__(self, shape: List):
         super().__init__()
         self.shape = shape
 
     def forward(self, x):
+        """
+        Forward pass.
+        """
+
         return x.view(self.shape)
 
 
@@ -257,11 +292,11 @@ class CriticModel(nn.Module):
     """
 
     def __init__(
-            self,
-            belief_size: int,
-            state_size: int,
-            hidden_size: int,
-            activation_function: Optional[str] = "relu"
+        self,
+        belief_size: int,
+        state_size: int,
+        hidden_size: int,
+        activation_function: Optional[str] = "relu",
     ) -> None:
         super().__init__()
         if isinstance(activation_function, str):
@@ -273,7 +308,7 @@ class CriticModel(nn.Module):
             activation_function(),
             nn.Linear(hidden_size, hidden_size),
             activation_function(),
-            nn.Linear(hidden_size, 1)
+            nn.Linear(hidden_size, 1),
         )
 
     def forward(self, belief, state):
@@ -296,10 +331,10 @@ class ActorModel(nn.Module):
         state_size: int,
         hidden_size: int,
         action_size: int,
-        activation_function: str="elu",
-        min_std: float=1e-4,
-        init_std: float=5,
-        mean_scale: float=5,
+        activation_function: str = "elu",
+        min_std: float = 1e-4,
+        init_std: float = 5,
+        mean_scale: float = 5,
     ) -> None:
         super().__init__()
         if isinstance(activation_function, str):
@@ -313,7 +348,7 @@ class ActorModel(nn.Module):
             activation_function(),
             nn.Linear(hidden_size, hidden_size),
             activation_function(),
-            nn.Linear(hidden_size, 2 * action_size)
+            nn.Linear(hidden_size, 2 * action_size),
         )
 
         self._min_std = min_std
@@ -356,7 +391,9 @@ class CnnImageEncoder(nn.Module):
             nn.Conv2d(128, 256, 4, 2),  # (B, 3, H, W) ->  (B, 256, H/16, W/16)
             activation(),
             nn.Flatten(),
-            nn.Identity() if embedding_size == 1024 else nn.Linear(1024, embedding_size),
+            nn.Identity()
+            if embedding_size == 1024
+            else nn.Linear(1024, embedding_size),
         )
 
     def forward(self, observation: Tensor) -> Tensor:
@@ -383,6 +420,7 @@ class LinearCombination(nn.Module):
         """
 
         return self.in1_linear(in1) + self.in1_linear(in2)
+
 
 # "atanh", "TanhBijector" and "SampleDist" are from the following repo
 # https://github.com/juliusfrost/dreamer-pytorch
@@ -438,6 +476,7 @@ class TanhBijector(torch.distributions.Transform):
         """
 
         return 2.0 * (np.log(2) - x - F.softplus(-2.0 * x))
+
 
 class SampleDist:
     """

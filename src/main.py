@@ -289,4 +289,4 @@ if __name__ == "__main__":
     import os
 
     print("Command Dir:", os.getcwd())
-    my_app()
+    my_app(None)

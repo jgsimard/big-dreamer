@@ -7,7 +7,6 @@ from torch import Tensor, optim, nn
 from torch.distributions import Normal, kl_divergence
 from torch.nn import functional as F
 
-import utils
 from env import EnvBatcher
 from memory import ExperienceReplay
 from models import (
@@ -17,10 +16,9 @@ from models import (
     CnnImageEncoder,
     bottle,
 )
+from utils import device
 from planner import MPCPlanner
 from base_agent import BaseAgent
-
-import torch.nn.common_types
 
 
 class Planet(BaseAgent):
@@ -83,24 +81,21 @@ class Planet(BaseAgent):
 
         self.replay_buffer = ExperienceReplay(
             self.experience_size,
-            env.observation_size,
             env.action_size,
             self.bit_depth,
-            utils.device,
+            device,
         )
 
         self.initialize_models()
 
         # Global prior N(0, I).
         self.global_prior = Normal(
-            torch.zeros(
-                params["batch_size"], params["state_size"], device=utils.device
-            ),
-            torch.ones(params["batch_size"], params["state_size"], device=utils.device),
+            torch.zeros(params["batch_size"], params["state_size"], device=device),
+            torch.ones(params["batch_size"], params["state_size"], device=device),
         )
 
         # Allowed deviation in KL divergence
-        self.free_nats = torch.full((1,), params["free_nats"], device=utils.device)
+        self.free_nats = torch.full((1,), params["free_nats"], device=device)
 
         self.initialize_optimizers()
         self.load(params)
@@ -171,7 +166,7 @@ class Planet(BaseAgent):
                 self.hidden_size,
                 self.embedding_size,
                 self.dense_activation_function,
-            ).to(device=utils.device)
+            ).to(device=device)
         )
 
         self.observation_model = torch.jit.script(
@@ -180,7 +175,7 @@ class Planet(BaseAgent):
                 self.state_size,
                 self.embedding_size,
                 self.cnn_activation_function,
-            ).to(device=utils.device)
+            ).to(device=device)
         )
 
         self.reward_model = torch.jit.script(
@@ -189,14 +184,14 @@ class Planet(BaseAgent):
                 self.state_size,
                 self.hidden_size,
                 self.dense_activation_function,
-            ).to(device=utils.device)
+            ).to(device=device)
         )
 
         self.encoder = torch.jit.script(
             CnnImageEncoder(
                 self.embedding_size,
                 self.cnn_activation_function,
-            ).to(device=utils.device)
+            ).to(device=device)
         )
 
         self.planner = MPCPlanner(
@@ -335,15 +330,11 @@ class Planet(BaseAgent):
         observations, actions, rewards, nonterminals = self.replay_buffer.sample(
             self.batch_size, self.chunk_size
         )
-        # print('XXXXXXXXXXXXXX', observations.shape, actions.shape, rewards.shape, nonterminals.shape)
 
         # 2) Compute model States
-
         # Create initial belief and state for time t = 0
-        init_belief = torch.zeros(
-            self.batch_size, self.belief_size, device=utils.device
-        )
-        init_state = torch.zeros(self.batch_size, self.state_size, device=utils.device)
+        init_belief = torch.zeros(self.batch_size, self.belief_size, device=device)
+        init_state = torch.zeros(self.batch_size, self.state_size, device=device)
 
         # Update belief/state using posterior from previous belief/state,
         # previous action and current observation (over entire sequence at once)

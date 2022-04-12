@@ -9,9 +9,7 @@ class ExperienceReplay:
     Experience replay memory.
     """
 
-    def __init__(
-        self, size, observation_size, action_size, bit_depth, device
-    ):
+    def __init__(self, size, action_size, bit_depth, device):
         self.device = device
         self.size = size
         self.observations = np.empty((size, 3, 64, 64), np.uint8)
@@ -31,7 +29,9 @@ class ExperienceReplay:
         Append a new experience to the memory.
         """
         # Decentre and discretise visual observations (to save memory)
-        self.observations[self.idx] = postprocess_observation(observation.numpy(), self.bit_depth)  
+        self.observations[self.idx] = postprocess_observation(
+            observation.numpy(), self.bit_depth
+        )
         self.actions[self.idx] = action.numpy()
         self.rewards[self.idx] = reward
         self.nonterminals[self.idx] = not done
