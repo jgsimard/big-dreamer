@@ -4,6 +4,8 @@ Based on initial code from:
 
 
 ### Running Some of the Stuff
+#### Install Pre-commit
+python -m pre_commit install
 
 #### Tests
 python -m unittest
