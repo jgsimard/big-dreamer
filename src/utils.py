@@ -1,5 +1,5 @@
 import os
-from typing import Iterable
+from typing import Iterable, List
 
 import cv2
 import numpy as np
@@ -8,6 +8,22 @@ import torch
 from plotly.graph_objs import Scatter
 from plotly.graph_objs.scatter import Line
 from torch.nn import Module
+from torch import Tensor
+
+def cat(x: Tensor, y: Tensor) -> Tensor:
+    """
+    Concatenate x and y along the channel dimension
+    """
+
+    return torch.cat([x, y], dim=1)
+
+
+def chunk(x: Tensor) -> List[Tensor]:
+    """
+    chunk x in two along the channel dimension
+    """
+
+    return torch.chunk(x, 2, dim=1)
 
 
 # Plots min, max and mean + standard deviation bars of a population over time
@@ -263,3 +279,43 @@ class Flatten(torch.nn.Module):
 
         batch_size = x.shape[0]
         return x.view(batch_size, -1)
+
+
+def preprocess_observation_(observation, bit_depth) -> None:
+    """
+    Preprocesses an observation inplace.
+    (from float32 Tensor [0, 255] to [-0.5, 0.5])
+    """
+
+    # Quantise to given bit depth and centre
+    observation.div_(2 ** (8 - bit_depth)).floor_().div_(2**bit_depth).sub_(0.5)
+    # Dequantise:
+    # (to approx. match likelihood of PDF of continuous images vs. PMF of discrete images)
+    observation.add_(torch.rand_like(observation).div_(2**bit_depth))
+
+
+def postprocess_observation(observation, bit_depth) -> np.ndarray:
+    """
+    Postprocess an observation for storage.
+    (from float32 numpy array [-0.5, 0.5] to uint8 numpy array [0, 255])
+    """
+
+    return np.clip(
+        np.floor((observation + 0.5) * 2**bit_depth) * 2 ** (8 - bit_depth),
+        0,
+        2**8 - 1,
+    ).astype(np.uint8)
+
+
+def images_to_observation(images, bit_depth, observation_shape) -> np.ndarray:
+    # Resize and put channel first
+    images = torch.tensor(
+        cv2.resize(images, observation_shape, interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1),
+        dtype=torch.float32,
+    )
+
+    # Quantise, centre and dequantise inplace
+    preprocess_observation_(images, bit_depth)
+
+    # Add batch dimension
+    return images.unsqueeze(dim=0)

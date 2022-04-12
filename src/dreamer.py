@@ -1,14 +1,13 @@
 import torch
 from torch import optim, nn
 from torch.distributions import Normal
-from torch.nn import functional as F
 import torch.distributions as D
 from torch.distributions.transformed_distribution import TransformedDistribution
 
 
 from models import ActorModel, bottle, CriticModel, TanhBijector, SampleDist
 from planet import Planet
-from utils import FreezeParameters, device
+from utils import FreezeParameters, device, cat
 
 
 class Dreamer(Planet):
@@ -83,15 +82,12 @@ class Dreamer(Planet):
             actions = self.get_action(beliefs[t].detach(), _state.detach())
 
             # Compute belief (deterministic hidden state)
-            hidden = self.transition_model.fc_embed_state_action(torch.cat([_state, actions], dim=1))
+            hidden = self.transition_model.fc_embed_state_action(cat(_state, actions))
             beliefs[t + 1] = self.transition_model.rnn(hidden, beliefs[t])
 
             # Compute state prior by applying transition dynamics
-            # hidden = self.transition_model.fc_embed_belief_prior(beliefs[t + 1])
-            # prior_means[t + 1], _prior_std_dev = torch.chunk(self.transition_model.fc_state_prior(hidden), 2, dim=1)
-            # prior_std_devs[t + 1] = (F.softplus(_prior_std_dev) + self.transition_model.min_std_dev)
-            prior_means[t + 1], prior_std_devs[t + 1] = self.belief_prior(beliefs[t + 1])
-            prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])
+            prior_means[t+1], prior_std_devs[t+1] = self.transition_model.belief_prior(beliefs[t+1])
+            prior_states[t+1] = prior_means[t+1] + prior_std_devs[t+1] * torch.randn_like(prior_means[t+1])
 
         # Return new hidden states
         return (
@@ -121,9 +117,7 @@ class Dreamer(Planet):
 
         # Predict Rewards & Values
         with FreezeParameters(self.model_modules + [self.critic_model]):
-            imged_reward = bottle(
-                self.reward_model, (imged_belief, imged_prior_state)
-            )
+            imged_reward = bottle(self.reward_model, (imged_belief, imged_prior_state))
             value_pred = bottle(self.critic_model, (imged_belief, imged_prior_state))
 
         # Compute Values estimates

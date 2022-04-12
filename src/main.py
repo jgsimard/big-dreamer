@@ -68,7 +68,6 @@ def my_app(cfg: DictConfig) -> None:
 
     env = Env(
         params["env"],
-        params["symbolic_env"],
         params["seed"],
         params["max_episode_length"],
         params["action_repeat"],
@@ -140,6 +139,7 @@ def my_app(cfg: DictConfig) -> None:
 
             pbar = tqdm(range(params["max_episode_length"] // params["action_repeat"]))
             t = 0
+
             for t in pbar:
                 outputs = model.update_belief_and_act(
                     env,
@@ -171,7 +171,6 @@ def my_app(cfg: DictConfig) -> None:
                     env.close()
                     break
 
-            # TODO: check if this is correct. Variable t might be undefined
             env_steps += t * params["action_repeat"]
             num_episodes += 1
             logs["episodique_total_reward"] = total_reward
@@ -190,7 +189,6 @@ def my_app(cfg: DictConfig) -> None:
                 Env,
                 (
                     params["env"],
-                    params["symbolic_env"],
                     params["seed"],
                     params["max_episode_length"],
                     params["action_repeat"],
@@ -236,23 +234,23 @@ def my_app(cfg: DictConfig) -> None:
                     ) = outputs
 
                     total_rewards += reward.numpy()
+
                     # Collect real vs. predicted frames for video
-                    if not params["symbolic_env"]:
-                        video_frames.append(
-                            make_grid(
-                                torch.cat(
-                                    [
-                                        observation,
-                                        model.observation_model(
-                                            belief, posterior_state
-                                        ).cpu(),
-                                    ],
-                                    dim=3,
-                                )
-                                + 0.5,
-                                nrow=5,
-                            ).numpy()
-                        )  # Decentre
+                    video_frames.append(
+                        make_grid(
+                            torch.cat(
+                                [
+                                    observation,
+                                    model.observation_model(
+                                        belief, posterior_state
+                                    ).cpu(),
+                                ],
+                                dim=3,
+                            )
+                            + 0.5,
+                            nrow=5,
+                        ).numpy()
+                    )  # Decentre
                     observation = next_observation
                     if done.sum().item() == params["test_episodes"]:
                         pbar.close()

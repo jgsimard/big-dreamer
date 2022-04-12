@@ -7,24 +7,10 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 import torch.distributions as D
 
+from utils import cat
+
 
 Activation = Union[str, nn.Module]
-
-
-def cat(x: Tensor, y: Tensor) -> Tensor:
-    """
-    Concatenate x and y along the channel dimension
-    """
-
-    return torch.cat([x, y], dim=1)
-
-
-def chunk(x: Tensor) -> List[Tensor]:
-    """
-    chunk x in two along the channel dimension
-    """
-
-    return torch.chunk(x, 2, dim=1)
 
 
 def bottle(
@@ -86,49 +72,54 @@ class TransitionModel(nn.Module):
         self.rnn = nn.GRUCell(belief_size, belief_size)
 
         # model components
-        self.fc_embed_state_action = nn.Sequential(nn.Linear(state_size + action_size, belief_size), activation())
+        self.fc_embed_state_action = nn.Sequential(
+            nn.Linear(state_size + action_size, belief_size), 
+            activation()
+        )
 
         self.belief_prior = BeliefModel(belief_size,
                                         hidden_size,
                                         state_size,
                                         activation,
                                         min_std_dev)
-        # self.fc_embed_belief_prior = nn.Sequential(nn.Linear(belief_size, hidden_size), activation())
-        # self.fc_state_prior = nn.Linear(hidden_size, 2 * state_size)
         self.belief_posterior = BeliefModel(belief_size + embedding_size,
                                             hidden_size,
                                             state_size,
                                             activation,
                                             min_std_dev)
-        # self.fc_embed_belief_posterior = nn.Sequential(nn.Linear(belief_size + embedding_size, hidden_size), activation())
-        # self.fc_state_posterior = nn.Linear(hidden_size, 2 * state_size)
 
         self.modules = [
             self.fc_embed_state_action,
-            # self.fc_embed_belief_prior,
-            # self.fc_state_prior,
             self.belief_prior,
-            # self.fc_embed_belief_posterior,
-            # self.fc_state_posterior,
             self.belief_posterior
         ]
 
     def forward(
         self,
-        prev_state: Tensor,
+        init_state: Tensor,
         actions: Tensor,
-        prev_belief: Tensor,
+        init_belief: Tensor,
         observations: Optional[Tensor] = None,
         nonterminals: Optional[Tensor] = None,
     ) -> List[Tensor]:
         """
-        Input: init_belief, init_state:  torch.Size([50, 200]) torch.Size([50, 30])
-        Output: beliefs, prior_states, prior_means, prior_std_devs, posterior_states,
-                posterior_means, posterior_std_devs
-                torch.Size([49, 50, 200]) torch.Size([49, 50, 30])
-                torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
-                torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
+        L=Chunk size, B=Batch size, Hi=idden size, Be=Belief size, S=State Size, A=Action size
+        Input:
+            init_state:     (B, S)
+            actions:        (L, B, A)
+            init_belief:    (B, Be)
+            observations:   (L, B, C, H, W)
+            nonterminals:   (L, B, 1)
+        Output:
+            beliefs:            (L-1, B, Be)
+            prior_states:       (L-1, B, S)
+            prior_means:        (L-1, B, S)
+            prior_std_devs:     (L-1, B, S)
+            posterior_states:   (L-1, B, S)
+            posterior_means:    (L-1, B, S)
+            posterior_std_devs: (L-1, B, S)
         """
+ 
         # Create lists for hidden states
         # (cannot use single tensor as buffer because autograd won't work with inplace writes)
         T = actions.size(0) + 1
@@ -140,11 +131,10 @@ class TransitionModel(nn.Module):
         posterior_means = [torch.empty(0)] * T
         posterior_std_devs = [torch.empty(0)] * T
 
-        beliefs[0], prior_states[0], posterior_states[0] = (
-            prev_belief,
-            prev_state,
-            prev_state,
-        )
+        beliefs[0] = init_belief
+        prior_states[0] = init_state
+        posterior_states[0] = init_state
+
         # Loop over time sequence
         for t in range(T - 1):
             # Select appropriate previous state
@@ -158,19 +148,12 @@ class TransitionModel(nn.Module):
             beliefs[t + 1] = self.rnn(hidden, beliefs[t])
 
             # Compute state prior by applying transition dynamics
-            # hidden = self.fc_embed_belief_prior(beliefs[t + 1])
-            # prior_means[t + 1], _prior_std_dev = torch.chunk(self.fc_state_prior(hidden), 2, dim=1)
-            # prior_std_devs[t + 1] = F.softplus(_prior_std_dev) + self.min_std_dev
-
             prior_means[t + 1], prior_std_devs[t + 1] = self.belief_prior(beliefs[t + 1])
             prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])
 
             if observations is not None:
                 # Compute state posterior by applying transition dynamics and using current observation
                 t_ = t - 1  # Use t_ to deal with different time indexing for observations
-                # hidden = self.fc_embed_belief_posterior(torch.cat([beliefs[t + 1], observations[t_ + 1]], dim=1))
-                # posterior_means[t + 1], _posterior_std_dev = torch.chunk(self.fc_state_posterior(hidden), 2, dim=1)
-                # posterior_std_devs[t + 1] = (F.softplus(_posterior_std_dev) + self.min_std_dev)
                 posterior_means[t + 1], posterior_std_devs[t + 1] = self.belief_posterior(cat(beliefs[t + 1], observations[t_ + 1]))
                 posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[t + 1] * torch.randn_like(posterior_means[t + 1])
 
@@ -191,13 +174,12 @@ class TransitionModel(nn.Module):
 
 
 class Reshape(nn.Module):
-
     def __init__(self, shape: List):
         super().__init__()
         self.shape = shape
 
     def forward(self, x):
-        return x.view(*self.shape)
+        return x.view(self.shape)
 
 
 class ObservationModel(nn.Module):
@@ -220,7 +202,7 @@ class ObservationModel(nn.Module):
 
         self.decoder = nn.Sequential(
             nn.Linear(belief_size + state_size, embedding_size),
-            Reshape([-1, self.embedding_size, 1, 1]),
+            Reshape([-1, embedding_size, 1, 1]),
             nn.ConvTranspose2d(embedding_size, 128, 5, 2),
             activation(),
             nn.ConvTranspose2d(128, 64, 5, 2),
@@ -235,9 +217,6 @@ class ObservationModel(nn.Module):
         Forward pass.
         """
         return self.decoder(cat(belief, state))
-        # x = self.linear(merge_belief_and_state(belief, state))
-        # x = x.view(-1, self.embedding_size, 1, 1)
-        # return self.deconvs(x)
 
 
 class RewardModel(nn.Module):
@@ -340,7 +319,7 @@ class ActorModel(nn.Module):
         self._min_std = min_std
         self._init_std = init_std
         self._mean_scale = mean_scale
-        self.raw_init_std = torch.log(torch.exp(self._init_std) - 1)
+        self.raw_init_std = torch.log(torch.exp(torch.tensor(self._init_std)) - 1)
 
     def forward(self, belief, state):
         """
