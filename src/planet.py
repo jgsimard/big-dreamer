@@ -10,7 +10,13 @@ from torch.nn import functional as F
 import utils
 from env import EnvBatcher
 from memory import ExperienceReplay
-from models import TransitionModel, ObservationModel, RewardModel, CnnImageEncoder, bottle
+from models import (
+    TransitionModel,
+    ObservationModel,
+    RewardModel,
+    CnnImageEncoder,
+    bottle,
+)
 from planner import MPCPlanner
 from base_agent import BaseAgent
 
@@ -85,7 +91,7 @@ class Planet(BaseAgent):
 
         self.initialize_models()
 
-         # Global prior N(0, I).
+        # Global prior N(0, I).
         self.global_prior = Normal(
             torch.zeros(
                 params["batch_size"], params["state_size"], device=utils.device
@@ -94,14 +100,12 @@ class Planet(BaseAgent):
         )
 
         # Allowed deviation in KL divergence
-        self.free_nats = torch.full(
-            (1,), params["free_nats"], device=utils.device
-        )
+        self.free_nats = torch.full((1,), params["free_nats"], device=utils.device)
 
         self.initialize_optimizers()
         self.load(params)
 
-    def load(self, params: Dict[str, Any])  -> None:
+    def load(self, params: Dict[str, Any]) -> None:
         """
         Load models if they exist.
         """
@@ -159,33 +163,41 @@ class Planet(BaseAgent):
         Initialize the different models.
         """
 
-        self.transition_model = torch.jit.script(TransitionModel(
-            self.belief_size,
-            self.state_size,
-            self.action_size,
-            self.hidden_size,
-            self.embedding_size,
-            self.dense_activation_function,
-        ).to(device=utils.device))
+        self.transition_model = torch.jit.script(
+            TransitionModel(
+                self.belief_size,
+                self.state_size,
+                self.action_size,
+                self.hidden_size,
+                self.embedding_size,
+                self.dense_activation_function,
+            ).to(device=utils.device)
+        )
 
-        self.observation_model = torch.jit.script(ObservationModel(
-            self.belief_size,
-            self.state_size,
-            self.embedding_size,
-            self.cnn_activation_function,
-        ).to(device=utils.device))
+        self.observation_model = torch.jit.script(
+            ObservationModel(
+                self.belief_size,
+                self.state_size,
+                self.embedding_size,
+                self.cnn_activation_function,
+            ).to(device=utils.device)
+        )
 
-        self.reward_model = torch.jit.script(RewardModel(
-            self.belief_size,
-            self.state_size,
-            self.hidden_size,
-            self.dense_activation_function,
-        ).to(device=utils.device))
+        self.reward_model = torch.jit.script(
+            RewardModel(
+                self.belief_size,
+                self.state_size,
+                self.hidden_size,
+                self.dense_activation_function,
+            ).to(device=utils.device)
+        )
 
-        self.encoder = torch.jit.script(CnnImageEncoder(
-            self.embedding_size,
-            self.cnn_activation_function,
-        ).to(device=utils.device))
+        self.encoder = torch.jit.script(
+            CnnImageEncoder(
+                self.embedding_size,
+                self.cnn_activation_function,
+            ).to(device=utils.device)
+        )
 
         self.planner = MPCPlanner(
             self.action_size,
@@ -220,11 +232,8 @@ class Planet(BaseAgent):
         )
 
     def observation_loss(
-        self,
-        beliefs: Tensor,
-        posterior_states: Tensor,
-        observations: Tensor
-        )-> Tensor:
+        self, beliefs: Tensor, posterior_states: Tensor, observations: Tensor
+    ) -> Tensor:
         """
         Compute the observation loss.
         Args:
@@ -257,11 +266,8 @@ class Planet(BaseAgent):
         return observation_loss
 
     def reward_loss(
-        self,
-        beliefs: Tensor,
-        posterior_states: Tensor,
-        rewards: Tensor
-        ) -> Tensor:
+        self, beliefs: Tensor, posterior_states: Tensor, rewards: Tensor
+    ) -> Tensor:
         """
         Compute the reward loss. L=Chunk size, B=Batch Size
 
@@ -291,7 +297,7 @@ class Planet(BaseAgent):
         posterior_means: Tensor,
         posterior_std_devs: Tensor,
         prior_means: Tensor,
-        prior_std_devs: Tensor
+        prior_std_devs: Tensor,
     ) -> Tensor:
         """
         Compute the KL loss.
@@ -310,7 +316,6 @@ class Planet(BaseAgent):
                 Normal(posterior_means, posterior_std_devs), self.global_prior
             ).sum(dim=2).mean(dim=(0, 1))
         return kl_loss
-
 
     def train_step(self) -> dict:
         """
@@ -335,7 +340,9 @@ class Planet(BaseAgent):
         # 2) Compute model States
 
         # Create initial belief and state for time t = 0
-        init_belief = torch.zeros(self.batch_size, self.belief_size, device=utils.device)
+        init_belief = torch.zeros(
+            self.batch_size, self.belief_size, device=utils.device
+        )
         init_state = torch.zeros(self.batch_size, self.state_size, device=utils.device)
 
         # Update belief/state using posterior from previous belief/state,
@@ -360,11 +367,13 @@ class Planet(BaseAgent):
 
         # Calculate observation likelihood, reward likelihood and KL losses
         # sum over final dims, average over batch and time
-        
-        print(beliefs.shape, posterior_states.shape, observations.shape)
-        observation_loss = self.observation_loss(beliefs, posterior_states, observations)
+        observation_loss = self.observation_loss(
+            beliefs, posterior_states, observations
+        )
         reward_loss = self.reward_loss(beliefs, posterior_states, rewards)
-        kl_loss = self.kl_loss(posterior_means, posterior_std_devs, prior_means, prior_std_devs)
+        kl_loss = self.kl_loss(
+            posterior_means, posterior_std_devs, prior_means, prior_std_devs
+        )
         model_loss = observation_loss + reward_loss + kl_loss
 
         log["observation_loss"] = observation_loss.item()
@@ -418,7 +427,6 @@ class Planet(BaseAgent):
 
         # self.replay_buffer.append(observation, action, reward, done)
         return belief, posterior_state, action, next_observation, reward, done
-
 
     def get_action(self, belief, state):
         """
