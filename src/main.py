@@ -38,8 +38,10 @@ def my_app(cfg: DictConfig) -> None:
     if not os.path.exists(data_path):
         os.makedirs(data_path)
 
-    logdir = os.path.join(data_path,
-                          f'project_{cfg.exp_name}_{cfg.env}_{time.strftime("%d-%m-%Y_%H-%M-%S")}')
+    logdir = os.path.join(
+        data_path,
+        f'project_{cfg.exp_name}_{cfg.env}_{time.strftime("%d-%m-%Y_%H-%M-%S")}',
+    )
     params["logdir"] = logdir
     if not os.path.exists(logdir):
         os.makedirs(logdir)
@@ -263,10 +265,7 @@ def my_app(cfg: DictConfig) -> None:
             test_envs.close()
 
         # TODO : Save Model
-        if (
-            episode % params["log_video_freq"] == 0
-            and params["log_video_freq"] != -1
-        ):
+        if episode % params["log_video_freq"] == 0 and params["log_video_freq"] != -1:
             # log eval videos
             logger.log_video(
                 np.expand_dims(np.stack(video_frames), axis=0),

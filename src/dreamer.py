@@ -13,8 +13,8 @@ from utils import FreezeParameters, device
 
 class Dreamer(Planet):
     """
-    Dreamer is a Planet that learns to plan trajectories using a model-predictive control
-    algorithm.
+    Dreamer is the evolution of Planet. The model predictive controller is replaced by
+    an actor-critic to select the next action.
     """
 
     def __init__(self, params, env):
@@ -103,7 +103,7 @@ class Dreamer(Planet):
 
     def update_actor_critic(self, posterior_states, beliefs) -> dict:
         """
-        update_actor_critic is the function to update the actor and critic models.
+        Used to update the actor and critic models.
         """
 
         logs = {}
