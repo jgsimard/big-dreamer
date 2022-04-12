@@ -6,7 +6,7 @@ import torch.distributions as D
 from torch.distributions.transformed_distribution import TransformedDistribution
 
 
-from models_updated import ActorModel, bottle, CriticModel, TanhBijector, SampleDist
+from models import ActorModel, bottle, CriticModel, TanhBijector, SampleDist
 from planet import Planet
 from utils import FreezeParameters, device
 
@@ -81,28 +81,19 @@ class Dreamer(Planet):
         for t in range(T - 1):
             _state = prior_states[t]
             actions = self.get_action(beliefs[t].detach(), _state.detach())
-            # Compute belief (deterministic hidden state)
-            hidden = self.transition_model.fc_embed_state_action(
-                    torch.cat([_state, actions], dim=1)
-            )
-            beliefs[t + 1] = self.transition_model.rnn(hidden, beliefs[t])
-            # Compute state prior by applying transition dynamics
-            hidden = self.transition_model.fc_embed_belief_prior(
-                beliefs[t + 1]
-            )
-            
-            prior_means[t + 1], _prior_std_dev = torch.chunk(
-                self.transition_model.fc_state_prior(hidden), 2, dim=1
-            )
-            prior_std_devs[t + 1] = (
-                F.softplus(_prior_std_dev) + self.transition_model.min_std_dev
-            )
-            prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[
-                t + 1
-            ] * torch.randn_like(prior_means[t + 1])
-            # Return new hidden states
 
-        # imagined_traj = [beliefs, prior_states, prior_means, prior_std_devs]
+            # Compute belief (deterministic hidden state)
+            hidden = self.transition_model.fc_embed_state_action(torch.cat([_state, actions], dim=1))
+            beliefs[t + 1] = self.transition_model.rnn(hidden, beliefs[t])
+
+            # Compute state prior by applying transition dynamics
+            # hidden = self.transition_model.fc_embed_belief_prior(beliefs[t + 1])
+            # prior_means[t + 1], _prior_std_dev = torch.chunk(self.transition_model.fc_state_prior(hidden), 2, dim=1)
+            # prior_std_devs[t + 1] = (F.softplus(_prior_std_dev) + self.transition_model.min_std_dev)
+            prior_means[t + 1], prior_std_devs[t + 1] = self.belief_prior(beliefs[t + 1])
+            prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])
+
+        # Return new hidden states
         return (
             torch.stack(beliefs[1:], dim=0),
             torch.stack(prior_states[1:], dim=0),

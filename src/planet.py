@@ -8,7 +8,7 @@ from torch.nn import functional as F
 import utils
 from env import EnvBatcher
 from memory import ExperienceReplay
-from models_updated import TransitionModel, ObservationModel, RewardModel, CnnImageEncoder, bottle
+from models import TransitionModel, ObservationModel, RewardModel, CnnImageEncoder, bottle
 from planner import MPCPlanner
 from base_agent import BaseAgent
 
