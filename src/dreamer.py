@@ -173,6 +173,10 @@ class Dreamer(Planet):
         return logs
 
     def train_step(self) -> dict:
+        """
+        Used to train the model.
+        """
+
         ####################
         # DYNAMICS LEARNING
         ####################

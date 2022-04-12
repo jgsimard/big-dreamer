@@ -26,7 +26,7 @@ def bottle(f, x_tuple: tuple) -> Tensor:
         Tensor: output of f() of shape: (belief[0].size(), belief[1].size(), *f().size()[1:])
     """
 
-    x_sizes = tuple([x.size() for x in x_tuple])
+    x_sizes = [x.size() for x in x_tuple]
     y = f(*[x[0].view(x[1][0] * x[1][1], *x[1][2:]) for x in zip(x_tuple, x_sizes)])
     y_size = y.size()
     output = y.view(x_sizes[0][0], x_sizes[0][1], *y_size[1:])
@@ -164,25 +164,21 @@ class TransitionModel(nn.Module):
             prior_means[t + 1], prior_std_devs[t + 1] = self.belief_prior(
                 beliefs[t + 1]
             )
-            prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[
-                t + 1
-            ] * torch.randn_like(prior_means[t + 1])
+            prior_states_noise = prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])
+            prior_states[t + 1] = prior_means[t + 1] + prior_states_noise
 
             if observations is not None:
                 # Compute state posterior by applying transition dynamics and using
                 # current observation.
 
-                t_ = (
-                    t - 1
-                )  # Using t_ to deal with different time indexing for observations
+                t_ = t - 1 # Using t_ to deal with different time indexing for observations
 
                 (
                     posterior_means[t + 1],
-                    posterior_std_devs[t + 1],
-                ) = self.belief_posterior(cat(beliefs[t + 1], observations[t_ + 1]))
-                posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[
-                    t + 1
-                ] * torch.randn_like(posterior_means[t + 1])
+                    posterior_std_devs[t + 1]
+                 ) = self.belief_posterior(cat(beliefs[t + 1], observations[t_ + 1]))
+                noise = torch.randn_like(posterior_means[t + 1])
+                posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[t + 1] * noise
 
         # Return new hidden states
         hidden = [

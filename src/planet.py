@@ -340,7 +340,7 @@ class Planet(BaseAgent):
         # previous action and current observation (over entire sequence at once)
         (
             beliefs,
-            prior_states,
+            _, # prior_states, just in case
             prior_means,
             prior_std_devs,
             posterior_states,

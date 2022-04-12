@@ -75,10 +75,7 @@ def my_app(cfg: DictConfig) -> None:
     )
 
     # simulation timestep, will be used for video saving
-    if "model" in dir(env):
-        fps = 1 / env.model.opt.timestep
-    else:
-        fps = 10
+    fps = params["fps"]
 
     print("fps: ", fps)
 

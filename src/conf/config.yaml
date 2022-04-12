@@ -47,3 +47,4 @@ render: False
 log_freq : 1
 log_video_freq : -1
 wandb_project : null # 'test-project'
+fps: 10
