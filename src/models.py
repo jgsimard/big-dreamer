@@ -116,7 +116,7 @@ class TransitionModel(nn.Module):
         nonterminals: Optional[Tensor] = None,
     ) -> List[Tensor]:
         """
-        L=Chunk size, B=Batch size, Hi=idden size, Be=Belief size, S=State Size, A=Action size
+        L=Chunk size, B=Batch size, Hi=Hidden size, Be=Belief size, S=State Size, A=Action size
         Input:
             init_state:     (B, S)
             actions:        (L, B, A)

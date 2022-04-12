@@ -66,13 +66,7 @@ def my_app(cfg: DictConfig) -> None:
     # ENV
     #############
 
-    env = Env(
-        params["env"],
-        params["seed"],
-        params["max_episode_length"],
-        params["action_repeat"],
-        params["bit_depth"],
-    )
+    env = Env(params)
 
     # simulation timestep, will be used for video saving
     fps = params["fps"]
@@ -182,18 +176,7 @@ def my_app(cfg: DictConfig) -> None:
             model.eval()
 
             # Initialise parallelised test environments
-            test_envs = EnvBatcher(
-                Env,
-                (
-                    params["env"],
-                    params["seed"],
-                    params["max_episode_length"],
-                    params["action_repeat"],
-                    params["bit_depth"],
-                ),
-                {},
-                params["test_episodes"],
-            )
+            test_envs = EnvBatcher(Env, params, {}, params["test_episodes"])
 
             with torch.no_grad():
                 observation = test_envs.reset()

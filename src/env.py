@@ -303,10 +303,16 @@ class GymEnv(BaseEnv):
         return torch.from_numpy(self._env.action_space.sample())
 
 
-def Env(env, seed, max_episode_length, action_repeat, bit_depth) -> BaseEnv:
+def Env(params) -> BaseEnv:
     """
     Returns an environment wrapper.
     """
+
+    env = params["env"]
+    seed = params["seed"]
+    max_episode_length = params["max_episode_length"]
+    action_repeat = params["action_repeat"]
+    bit_depth = params["bit_depth"]
 
     if env in GYM_ENVS:
         return GymEnv(env, seed, max_episode_length, action_repeat, bit_depth)

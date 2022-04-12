@@ -39,7 +39,8 @@ top_candidates: 100
 test: False
 test_interval: 25
 test_episodes: 10
-checkpoint_interval: 50
+# checkpoint_interval: 50
+checkpoint_interval: 5
 checkpoint_experience: False
 models: ''
 experience_replay: ''
