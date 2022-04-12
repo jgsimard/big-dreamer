@@ -264,22 +264,22 @@ def my_app(cfg: DictConfig) -> None:
 
         # TODO : Save Model
         if (
-            train_step % params["log_video_freq"] == 0
+            episode % params["log_video_freq"] == 0
             and params["log_video_freq"] != -1
         ):
             # log eval videos
             logger.log_video(
                 np.expand_dims(np.stack(video_frames), axis=0),
                 name="Eval_rollout",
-                step=train_step,
+                step=episode,
             )
 
-        if train_step % params["log_freq"] == 0:
+        if episode % params["log_freq"] == 0:
             print("Perform Logging")
             # perform the logging
             for key, value in logs.items():
                 print(f"{key} : {value}")
-                logger.log_scalar(value, key, env_steps)  # should this be train_step?
+                logger.log_scalar(value, key, episode)
             print("Done logging...\n")
 
             logger.flush()
