@@ -38,8 +38,10 @@ def my_app(cfg: DictConfig) -> None:
     if not os.path.exists(data_path):
         os.makedirs(data_path)
 
-    logdir = os.path.join(data_path,
-                          f'project_{cfg.exp_name}_{cfg.env}_{time.strftime("%d-%m-%Y_%H-%M-%S")}')
+    logdir = os.path.join(
+        data_path,
+        f'project_{cfg.exp_name}_{cfg.env}_{time.strftime("%d-%m-%Y_%H-%M-%S")}',
+    )
     params["logdir"] = logdir
     if not os.path.exists(logdir):
         os.makedirs(logdir)
@@ -64,20 +66,10 @@ def my_app(cfg: DictConfig) -> None:
     # ENV
     #############
 
-    env = Env(
-        params["env"],
-        params["symbolic_env"],
-        params["seed"],
-        params["max_episode_length"],
-        params["action_repeat"],
-        params["bit_depth"],
-    )
+    env = Env(params)
 
     # simulation timestep, will be used for video saving
-    if "model" in dir(env):
-        fps = 1 / env.model.opt.timestep
-    else:
-        fps = 10
+    fps = params["fps"]
 
     print("fps: ", fps)
 
@@ -138,6 +130,7 @@ def my_app(cfg: DictConfig) -> None:
 
             pbar = tqdm(range(params["max_episode_length"] // params["action_repeat"]))
             t = 0
+
             for t in pbar:
                 outputs = model.update_belief_and_act(
                     env,
@@ -169,7 +162,6 @@ def my_app(cfg: DictConfig) -> None:
                     env.close()
                     break
 
-            # TODO: check if this is correct. Variable t might be undefined
             env_steps += t * params["action_repeat"]
             num_episodes += 1
             logs["episodique_total_reward"] = total_reward
@@ -184,19 +176,7 @@ def my_app(cfg: DictConfig) -> None:
             model.eval()
 
             # Initialise parallelised test environments
-            test_envs = EnvBatcher(
-                Env,
-                (
-                    params["env"],
-                    params["symbolic_env"],
-                    params["seed"],
-                    params["max_episode_length"],
-                    params["action_repeat"],
-                    params["bit_depth"],
-                ),
-                {},
-                params["test_episodes"],
-            )
+            test_envs = EnvBatcher(Env, params, {}, params["test_episodes"])
 
             with torch.no_grad():
                 observation = test_envs.reset()
@@ -234,23 +214,23 @@ def my_app(cfg: DictConfig) -> None:
                     ) = outputs
 
                     total_rewards += reward.numpy()
+
                     # Collect real vs. predicted frames for video
-                    if not params["symbolic_env"]:
-                        video_frames.append(
-                            make_grid(
-                                torch.cat(
-                                    [
-                                        observation,
-                                        model.observation_model(
-                                            belief, posterior_state
-                                        ).cpu(),
-                                    ],
-                                    dim=3,
-                                )
-                                + 0.5,
-                                nrow=5,
-                            ).numpy()
-                        )  # Decentre
+                    video_frames.append(
+                        make_grid(
+                            torch.cat(
+                                [
+                                    observation,
+                                    model.observation_model(
+                                        belief, posterior_state
+                                    ).cpu(),
+                                ],
+                                dim=3,
+                            )
+                            + 0.5,
+                            nrow=5,
+                        ).numpy()
+                    )  # Decentre
                     observation = next_observation
                     if done.sum().item() == params["test_episodes"]:
                         pbar.close()
@@ -263,23 +243,20 @@ def my_app(cfg: DictConfig) -> None:
             test_envs.close()
 
         # TODO : Save Model
-        if (
-            train_step % params["log_video_freq"] == 0
-            and params["log_video_freq"] != -1
-        ):
+        if episode % params["log_video_freq"] == 0 and params["log_video_freq"] != -1:
             # log eval videos
             logger.log_video(
                 np.expand_dims(np.stack(video_frames), axis=0),
                 name="Eval_rollout",
-                step=train_step,
+                step=episode,
             )
 
-        if train_step % params["log_freq"] == 0:
+        if episode % params["log_freq"] == 0:
             print("Perform Logging")
             # perform the logging
             for key, value in logs.items():
                 print(f"{key} : {value}")
-                logger.log_scalar(value, key, env_steps)  # should this be train_step?
+                logger.log_scalar(value, key, episode)
             print("Done logging...\n")
 
             logger.flush()
@@ -292,4 +269,4 @@ if __name__ == "__main__":
     import os
 
     print("Command Dir:", os.getcwd())
-    my_app()
+    my_app(None)

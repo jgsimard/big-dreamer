@@ -3,7 +3,6 @@ exp_name: 'default'
 seed: 0
 disable_cuda: false
 env: 'Pendulum-v0'
-symbolic_env: False
 max_episode_length: 1000
 experience_size: 1000000   # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
 cnn_activation_function: 'ReLU'
@@ -18,11 +17,9 @@ episodes: 1000
 seed_episodes: 5
 collect_interval: 100
 batch_size: 50
-chunk_size: 50
+# chunk_size: 50
+chunk_size: 18
 worldmodel_LogProbLoss: False
-overshooting_distance: 50
-overshooting_kl_beta: 0.0
-overshooting_reward_scale: 0.0
 global_kl_beta: 0.0  # Global KL weight (0 to disable)')
 free_nats: 3.0
 bit_depth: 5
@@ -42,7 +39,8 @@ top_candidates: 100
 test: False
 test_interval: 25
 test_episodes: 10
-checkpoint_interval: 50
+# checkpoint_interval: 50
+checkpoint_interval: 5
 checkpoint_experience: False
 models: ''
 experience_replay: ''
@@ -50,3 +48,4 @@ render: False
 log_freq : 1
 log_video_freq : -1
 wandb_project : null # 'test-project'
+fps: 10

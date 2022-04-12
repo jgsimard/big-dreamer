@@ -10,11 +10,6 @@ repos:
       - id: check-ast
       - id: check-added-large-files
 
-  - repo: https://github.com/ambv/black
-    rev: 22.3.0
-    hooks:
-      - id: black
-
   - repo: local
     hooks:
       - id: pylint
@@ -23,7 +18,6 @@ repos:
         language: system
         types: [python]
         always_run: true
-
 
   - repo: local
     hooks:
