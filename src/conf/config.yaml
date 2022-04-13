@@ -27,7 +27,6 @@ actor_learning_rate: 8e-5
 value_learning_rate: 8e-5
 learning_rate_schedule: 0
 adam_epsilon: 1e-7
-# Note that original has a linear learning rate decay, but it seems unlikely that this makes a significant difference
 grad_clip_norm: 100.0
 planning_horizon: 15
 discount: 0.99
@@ -52,3 +51,5 @@ fps: 10
 # Dreamer V2
 kl_balance:  0.8
 kl_loss_weight: 1.0 # 0.1 for dreamerV2
+
+latent_distribution: "Gaussian" # so far Gaussian, Categorial

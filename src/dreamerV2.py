@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import torch
 from torch import Tensor
 from torch.distributions import Normal, kl_divergence
@@ -22,20 +24,27 @@ class DreamerV2(Dreamer):
             self.kl_loss_weight = 0.1
 
     def kl_loss(
-        self,
-        posterior_means: Tensor,
-        posterior_std_devs: Tensor,
-        prior_means: Tensor,
-        prior_std_devs: Tensor,
+            self,
+            posterior_params: Tuple[Tensor, ...],
+            prior_params: Tuple[Tensor, ...],
     ) -> Tensor:
+
         """
         Compute the KL loss.
         """
-        dist_post = Normal(posterior_means, posterior_std_devs)
-        dist_post_detach = Normal(posterior_means.detach(), posterior_std_devs.detach())
+        if self.latent_distribution == "Gaussian":
+            posterior_means, posterior_std_devs = posterior_params
+            prior_means, prior_std_devs = prior_params
 
-        dist_prior = Normal(prior_means, prior_std_devs)
-        dist_prior_detach = Normal(prior_means.detach(), prior_std_devs.detach())
+            dist_post = Normal(posterior_means, posterior_std_devs)
+            dist_post_detach = Normal(posterior_means.detach(), posterior_std_devs.detach())
+
+            dist_prior = Normal(prior_means, prior_std_devs)
+            dist_prior_detach = Normal(prior_means.detach(), prior_std_devs.detach())
+        elif self.latent_distribution == "Categorical":
+            pass
+        else:
+            raise NotImplementedError()
 
         kl_lhs = kl_divergence(dist_post_detach, dist_prior).sum(dim=2)
         kl_rhs = kl_divergence(dist_post, dist_prior_detach).sum(dim=2)

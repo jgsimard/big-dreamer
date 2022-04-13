@@ -1,6 +1,6 @@
 import os
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import torch
 from torch import Tensor, optim, nn
@@ -56,6 +56,7 @@ class Planet(BaseAgent):
         self.experience_size = params["experience_size"]
         self.bit_depth = params["bit_depth"]
         self.kl_loss_weight = params['kl_loss_weight']
+        self.latent_distribution = params['latent_distribution']
 
         """
         Initialize MPC parameters.
@@ -68,7 +69,6 @@ class Planet(BaseAgent):
 
         self.model_learning_rate = params["model_learning_rate"]
         self.adam_epsilon = params["adam_epsilon"]
-        self.global_kl_beta = params["global_kl_beta"]
         self.action_noise = params["action_noise"]
         self.grad_clip_norm = params["grad_clip_norm"]
         self.action_repeat = params["action_repeat"]
@@ -152,7 +152,6 @@ class Planet(BaseAgent):
         """
         Initialize the different models.
         """
-
         self.transition_model = torch.jit.script(
             TransitionModel(
                 self.belief_size,
@@ -283,15 +282,16 @@ class Planet(BaseAgent):
         return reward_loss
 
     def kl_loss(
-        self,
-        posterior_means: Tensor,
-        posterior_std_devs: Tensor,
-        prior_means: Tensor,
-        prior_std_devs: Tensor,
+            self,
+            posterior_params: Tuple[Tensor, ...],
+            prior_params: Tuple[Tensor, ...],
     ) -> Tensor:
         """
         Compute the KL loss.
         """
+        # extract Gaussian params
+        posterior_means, posterior_std_devs = posterior_params
+        prior_means, prior_std_devs = prior_params
 
         div = kl_divergence(
             Normal(posterior_means, posterior_std_devs),
@@ -333,12 +333,10 @@ class Planet(BaseAgent):
         # previous action and current observation (over entire sequence at once)
         (
             beliefs,
-            _, # prior_states, just in case
-            prior_means,
-            prior_std_devs,
+            _,  # prior_states, just in case
+            prior_params,
             posterior_states,
-            posterior_means,
-            posterior_std_devs,
+            posterior_params,
         ) = self.transition_model(
             init_state,
             actions[:-1],
@@ -355,9 +353,7 @@ class Planet(BaseAgent):
             beliefs, posterior_states, observations
         )
         reward_loss = self.reward_loss(beliefs, posterior_states, rewards)
-        kl_loss = self.kl_loss(
-            posterior_means, posterior_std_devs, prior_means, prior_std_devs
-        )
+        kl_loss = self.kl_loss(posterior_params, prior_params)
         model_loss = observation_loss + reward_loss + kl_loss * self.kl_loss_weight
 
         log["observation_loss"] = observation_loss.item()

@@ -34,7 +34,33 @@ def bottle(f, x_tuple: tuple) -> Tensor:
     return output
 
 
-class BeliefModel(nn.Module):
+class GaussianBeliefModel(nn.Module):
+    """
+    Belief model
+    """
+
+    def __init__(self, input_size, hidden_size, state_size, activation, min_std_dev):
+        super().__init__()
+        self.min_std_dev = min_std_dev
+        self.belief_fc = nn.Sequential(nn.Linear(input_size, hidden_size), activation())
+        self.state_fc = nn.Linear(hidden_size, 2 * state_size)
+
+    def forward(self, belief):
+        """
+        Args:
+            belief (Tensor): belief of shape: (batch_size, belief_size)
+
+        Returns:
+            Tensor: belief of shape: (batch_size, belief_size)
+        """
+
+        hidden = self.belief_fc(belief)
+        mean, _std_dev = torch.chunk(self.state_fc(hidden), 2, dim=1)
+        std_dev = F.softplus(_std_dev) + self.min_std_dev
+        return mean, std_dev
+
+
+class CategoricalBeliefModel(nn.Module):
     """
     Belief model
     """
@@ -74,6 +100,7 @@ class TransitionModel(nn.Module):
         embedding_size: int,
         activation: Optional[str] = "relu",
         min_std_dev: float = 0.1,
+        latent_distribution: Optional[str] = "Gaussian"
     ) -> None:
         super().__init__()
 
@@ -81,6 +108,9 @@ class TransitionModel(nn.Module):
         if isinstance(activation, str):
             activation = getattr(nn, activation)
         self.min_std_dev = min_std_dev
+
+        assert latent_distribution in ["Gaussian", "Categorical"], f"{latent_distribution}"
+        self.latent_distribution = latent_distribution
 
         # recurrent component
         self.rnn = nn.GRUCell(belief_size, belief_size)
@@ -90,17 +120,28 @@ class TransitionModel(nn.Module):
             nn.Linear(state_size + action_size, belief_size), activation()
         )
 
-        self.belief_prior = BeliefModel(
-            belief_size, hidden_size, state_size, activation, min_std_dev
-        )
-        self.belief_posterior = BeliefModel(
-            belief_size + embedding_size,
-            hidden_size,
-            state_size,
-            activation,
-            min_std_dev,
-        )
-
+        if self.latent_distribution == "Gaussian":
+            self.belief_prior = GaussianBeliefModel(
+                belief_size, hidden_size, state_size, activation, min_std_dev
+            )
+            self.belief_posterior = GaussianBeliefModel(
+                belief_size + embedding_size,
+                hidden_size,
+                state_size,
+                activation,
+                min_std_dev,
+            )
+        elif self.latent_distribution == "Categorical":
+            self.belief_prior = CategoricalBeliefModel(
+                belief_size, hidden_size, state_size, activation, min_std_dev
+            )
+            self.belief_posterior = CategoricalBeliefModel(
+                belief_size + embedding_size,
+                hidden_size,
+                state_size,
+                activation,
+                min_std_dev,
+            )
         self.modules = [
             self.fc_embed_state_action,
             self.belief_prior,
@@ -126,11 +167,9 @@ class TransitionModel(nn.Module):
         Output:
             beliefs:            (L-1, B, Be)
             prior_states:       (L-1, B, S)
-            prior_means:        (L-1, B, S)
-            prior_std_devs:     (L-1, B, S)
+            prior_params:       (L-1, B, S*X)
             posterior_states:   (L-1, B, S)
-            posterior_means:    (L-1, B, S)
-            posterior_std_devs: (L-1, B, S)
+            posterior_params:   (L-1, B, S*X)
         """
 
         # Create lists for hidden states
@@ -138,11 +177,15 @@ class TransitionModel(nn.Module):
         T = actions.size(0) + 1
         beliefs = [torch.empty(0)] * T
         prior_states = [torch.empty(0)] * T
-        prior_means = [torch.empty(0)] * T
-        prior_std_devs = [torch.empty(0)] * T
         posterior_states = [torch.empty(0)] * T
-        posterior_means = [torch.empty(0)] * T
-        posterior_std_devs = [torch.empty(0)] * T
+
+        if self.latent_distribution == "Gaussian":
+            prior_means = [torch.empty(0)] * T
+            prior_std_devs = [torch.empty(0)] * T
+            posterior_means = [torch.empty(0)] * T
+            posterior_std_devs = [torch.empty(0)] * T
+        elif self.latent_distribution == "Categorical":
+            pass
 
         beliefs[0] = init_belief
         prior_states[0] = init_state
@@ -161,38 +204,59 @@ class TransitionModel(nn.Module):
             beliefs[t + 1] = self.rnn(hidden, beliefs[t])
 
             # Compute state prior by applying transition dynamics
-            prior_means[t + 1], prior_std_devs[t + 1] = self.belief_prior(
-                beliefs[t + 1]
-            )
-            prior_states_noise = prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])
-            prior_states[t + 1] = prior_means[t + 1] + prior_states_noise
+            if self.latent_distribution == "Gaussian":
+                prior_means[t + 1], \
+                prior_std_devs[t + 1] = self.belief_prior(beliefs[t + 1])
+                prior_states_noise = prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])
+                prior_states[t + 1] = prior_means[t + 1] + prior_states_noise
+            elif self.latent_distribution == "Categorical":
+                pass
 
             if observations is not None:
                 # Compute state posterior by applying transition dynamics and using
                 # current observation.
 
                 t_ = t - 1 # Using t_ to deal with different time indexing for observations
+                if self.latent_distribution == "Gaussian":
+                    (
+                        posterior_means[t + 1],
+                        posterior_std_devs[t + 1]
+                     ) = self.belief_posterior(cat(beliefs[t + 1], observations[t_ + 1]))
+                    noise = posterior_std_devs[t + 1] * torch.randn_like(posterior_means[t + 1])
+                    posterior_states[t + 1] = posterior_means[t + 1] + noise
 
-                (
-                    posterior_means[t + 1],
-                    posterior_std_devs[t + 1]
-                 ) = self.belief_posterior(cat(beliefs[t + 1], observations[t_ + 1]))
-                noise = torch.randn_like(posterior_means[t + 1])
-                posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[t + 1] * noise
-
+                elif self.latent_distribution == "Categorical":
+                    pass
         # Return new hidden states
+
         hidden = [
             torch.stack(beliefs[1:], dim=0),
-            torch.stack(prior_states[1:], dim=0),
-            torch.stack(prior_means[1:], dim=0),
-            torch.stack(prior_std_devs[1:], dim=0),
+            torch.stack(prior_states[1:], dim=0)
         ]
+
+        # add prior params
+        if self.latent_distribution == "Gaussian":
+            prior_params = (
+                torch.stack(prior_means[1:], dim=0),
+                torch.stack(prior_std_devs[1:], dim=0)
+            )
+        elif self.latent_distribution == "Categorical":
+            pass
+        hidden.append(prior_params)
+
         if observations is not None:
-            hidden += [
-                torch.stack(posterior_states[1:], dim=0),
-                torch.stack(posterior_means[1:], dim=0),
-                torch.stack(posterior_std_devs[1:], dim=0),
-            ]
+            # add posterior states
+            hidden.append(torch.stack(posterior_states[1:], dim=0))
+            # add posterior params
+            if self.latent_distribution == "Gaussian":
+                posterior_params = (
+                    torch.stack(posterior_means[1:], dim=0),
+                    torch.stack(posterior_std_devs[1:], dim=0)
+                )
+            elif self.latent_distribution == "Categorical":
+                pass
+            hidden.append(posterior_params)
+
         return hidden
 
 

@@ -10,6 +10,7 @@ from torchvision.utils import make_grid
 
 from planet import Planet
 from dreamer import Dreamer
+from dreamerV2 import DreamerV2
 from logger import Logger
 from env import Env, EnvBatcher
 from utils import init_gpu, device
@@ -76,13 +77,12 @@ def my_app(cfg: DictConfig) -> None:
     #############
     # Model
     #############
-
     if params["algorithm"] == "planet":
         model = Planet(params, env)
     elif params["algorithm"] == "dreamer":
         model = Dreamer(params, env)
     elif params["algorithm"] == "dreamerV2":
-        raise NotImplementedError("DreamerV2 is not yet implemented")
+        model = DreamerV2
     else:
         raise NotImplementedError(
             f'algorithm {params["algorithm"]} is not yet implemented.'
