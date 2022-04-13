@@ -303,13 +303,17 @@ class Planet(BaseAgent):
             Normal(prior_means, prior_std_devs),
         ).sum(dim=2)
 
-        # Note:
-        # Normalisation by overshooting distance and weighting by overshooting distance cancel out
+        # this is the free bits optimization presented in
+        # Improved Variational Inference with Inverse Autoregressive Flow : C.8.
+        # https://arxiv.org/abs/1606.04934
         kl_loss = torch.max(div, self.free_nats).mean(dim=(0, 1))
+
         if self.global_kl_beta != 0:
             kl_loss += self.global_kl_beta * kl_divergence(
-                Normal(posterior_means, posterior_std_devs), self.global_prior
+                Normal(posterior_means, posterior_std_devs),
+                self.global_prior
             ).sum(dim=2).mean(dim=(0, 1))
+
         return kl_loss
 
     def train_step(self) -> dict:
