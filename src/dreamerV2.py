@@ -18,7 +18,8 @@ class DreamerV2(Dreamer):
         super().__init__(params, env)
 
         self.kl_balance = params['kl_balance']
-
+        if self.kl_loss_weight == 1.0:
+            self.kl_loss_weight = 0.1
 
     def kl_loss(
         self,

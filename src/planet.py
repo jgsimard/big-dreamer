@@ -55,6 +55,7 @@ class Planet(BaseAgent):
 
         self.experience_size = params["experience_size"]
         self.bit_depth = params["bit_depth"]
+        self.kl_loss_weight = params['kl_loss_weight']
 
         """
         Initialize MPC parameters.
@@ -87,12 +88,6 @@ class Planet(BaseAgent):
         )
 
         self.initialize_models()
-
-        # Global prior N(0, I).
-        self.global_prior = Normal(
-            torch.zeros(params["batch_size"], params["state_size"], device=device),
-            torch.ones(params["batch_size"], params["state_size"], device=device),
-        )
 
         # Allowed deviation in KL divergence
         self.free_nats = torch.full((1,), params["free_nats"], device=device)
@@ -308,12 +303,6 @@ class Planet(BaseAgent):
         # https://arxiv.org/abs/1606.04934
         kl_loss = torch.max(div, self.free_nats).mean(dim=(0, 1))
 
-        if self.global_kl_beta != 0:
-            kl_loss += self.global_kl_beta * kl_divergence(
-                Normal(posterior_means, posterior_std_devs),
-                self.global_prior
-            ).sum(dim=2).mean(dim=(0, 1))
-
         return kl_loss
 
     def train_step(self) -> dict:
@@ -369,7 +358,7 @@ class Planet(BaseAgent):
         kl_loss = self.kl_loss(
             posterior_means, posterior_std_devs, prior_means, prior_std_devs
         )
-        model_loss = observation_loss + reward_loss + kl_loss
+        model_loss = observation_loss + reward_loss + kl_loss * self.kl_loss_weight
 
         log["observation_loss"] = observation_loss.item()
         log["reward_loss"] = reward_loss.item()

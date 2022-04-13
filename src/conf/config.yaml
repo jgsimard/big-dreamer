@@ -20,7 +20,6 @@ batch_size: 50
 # chunk_size: 50
 chunk_size: 18
 worldmodel_LogProbLoss: False
-global_kl_beta: 0.0  # Global KL weight (0 to disable)')
 free_nats: 3.0
 bit_depth: 5
 model_learning_rate: 1e-3
@@ -49,3 +48,7 @@ log_freq : 1
 log_video_freq : -1
 wandb_project : null # 'test-project'
 fps: 10
+
+# Dreamer V2
+kl_balance:  0.8
+kl_loss_weight: 1.0 # 0.1 for dreamerV2
