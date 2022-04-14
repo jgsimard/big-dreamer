@@ -23,7 +23,7 @@ class DreamerV2(Dreamer):
         if self.kl_loss_weight == 1.0:
             self.kl_loss_weight = 0.1
 
-    def kl_loss(
+    def _kl_loss(
             self,
             posterior_params: Tuple[Tensor, ...],
             prior_params: Tuple[Tensor, ...],

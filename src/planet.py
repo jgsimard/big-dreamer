@@ -38,14 +38,12 @@ class Planet(BaseAgent):
         self.action_size = env.action_size
         self.hidden_size = params["hidden_size"]
         self.embedding_size = params["embedding_size"]
-        self.dense_activation_function = params["dense_activation_function"]
 
-        self.observation_size = env.observation_size
-        self.embedding_size = params["embedding_size"]
+        self.dense_activation_function = params["dense_activation_function"]
         self.cnn_activation_function = params["cnn_activation_function"]
 
         self.batch_size = params["batch_size"]
-        self.chunk_size = params["chunk_size"]
+        self.seq_len = params["seq_len"]
 
         self.seed_episodes = params["seed_episodes"]
 
@@ -220,7 +218,7 @@ class Planet(BaseAgent):
             self.model_params, lr=self.model_learning_rate, eps=self.adam_epsilon
         )
 
-    def observation_loss(
+    def _observation_loss(
         self, beliefs: Tensor, posterior_states: Tensor, observations: Tensor
     ) -> Tensor:
         """
@@ -254,7 +252,7 @@ class Planet(BaseAgent):
             )
         return observation_loss
 
-    def reward_loss(
+    def _reward_loss(
         self, beliefs: Tensor, posterior_states: Tensor, rewards: Tensor
     ) -> Tensor:
         """
@@ -281,7 +279,7 @@ class Planet(BaseAgent):
             ).mean(dim=(0, 1))
         return reward_loss
 
-    def kl_loss(
+    def _kl_loss(
             self,
             posterior_params: Tuple[Tensor, ...],
             prior_params: Tuple[Tensor, ...],
@@ -305,7 +303,7 @@ class Planet(BaseAgent):
 
         return kl_loss
 
-    def train_step(self) -> dict:
+    def train_step(self) -> Dict[str, float]:
         """
         Train the model for one step.
         """
@@ -321,7 +319,7 @@ class Planet(BaseAgent):
         # at random from the dataset (including terminal flags)
         # Transitions start at time t = 0
         observations, actions, rewards, nonterminals = self.replay_buffer.sample(
-            self.batch_size, self.chunk_size
+            self.batch_size, self.seq_len
         )
 
         # 2) Compute model States
@@ -349,11 +347,11 @@ class Planet(BaseAgent):
 
         # Calculate observation likelihood, reward likelihood and KL losses
         # sum over final dims, average over batch and time
-        observation_loss = self.observation_loss(
+        observation_loss = self._observation_loss(
             beliefs, posterior_states, observations
         )
-        reward_loss = self.reward_loss(beliefs, posterior_states, rewards)
-        kl_loss = self.kl_loss(posterior_params, prior_params)
+        reward_loss = self._reward_loss(beliefs, posterior_states, rewards)
+        kl_loss = self._kl_loss(posterior_params, prior_params)
         model_loss = observation_loss + reward_loss + kl_loss * self.kl_loss_weight
 
         log["observation_loss"] = observation_loss.item()

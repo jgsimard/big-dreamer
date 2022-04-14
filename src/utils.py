@@ -14,17 +14,42 @@ from torch import Tensor
 def cat(x: Tensor, y: Tensor) -> Tensor:
     """
     Concatenate x and y along the channel dimension
-    """
 
+    :param x:
+    :param y:
+    :return:
+    """
     return torch.cat([x, y], dim=1)
 
 
 def chunk(x: Tensor) -> List[Tensor]:
     """
     chunk x in two along the channel dimension
-    """
 
+    :param x:
+    :return:
+    """
     return torch.chunk(x, 2, dim=1)
+
+
+def stack(x: List[Tensor]) -> Tensor:
+    """
+    stack list of tensor while skiping the first element
+
+    :param x:
+    :return:
+    """
+    return torch.stack(x[1:], dim=0)
+
+
+def prefill(t: int) -> List[Tensor]:
+    """
+    stuff
+
+    :param t:
+    :return:
+    """
+    return [torch.empty(0)] * t
 
 
 # Plots min, max and mean + standard deviation bars of a population over time
@@ -165,6 +190,7 @@ class ActivateParameters:
 def get_parameters(modules: Iterable[Module]):
     """
     Given a list of torch modules, returns a list of their parameters.
+
     :param modules: iterable of modules
     :returns: a list of parameters
     """

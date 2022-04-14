@@ -21,19 +21,16 @@ def my_app(cfg: DictConfig) -> None:
     """
     Main function for running the experiments.
     """
-
-    # print(OmegaConf.to_yaml(cfg))
     print("Command Dir:", os.getcwd())
 
     params = vars(cfg)
-    # params.extend(env_args)
     for key, value in cfg.items():
         params[key] = value
     print("params: ", params)
 
-    # ##################################
-    # ### CREATE DIRECTORY FOR LOGGING
-    # ##################################
+    ##################################
+    ### CREATE DIRECTORY FOR LOGGING
+    ##################################
     data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
 
     if not os.path.exists(data_path):
@@ -66,13 +63,7 @@ def my_app(cfg: DictConfig) -> None:
     #############
     # ENV
     #############
-
     env = Env(params)
-
-    # simulation timestep, will be used for video saving
-    fps = params["fps"]
-
-    print("fps: ", fps)
 
     #############
     # Model
@@ -82,7 +73,7 @@ def my_app(cfg: DictConfig) -> None:
     elif params["algorithm"] == "dreamer":
         model = Dreamer(params, env)
     elif params["algorithm"] == "dreamerV2":
-        model = DreamerV2
+        model = DreamerV2(params, env)
     else:
         raise NotImplementedError(
             f'algorithm {params["algorithm"]} is not yet implemented.'
@@ -169,8 +160,6 @@ def my_app(cfg: DictConfig) -> None:
         ##########################
         # Test model
         ##########################
-
-        # TODO : Test Model
         if episode % params["test_interval"] == 0:
             print("Test model")
             model.eval()
@@ -197,13 +186,6 @@ def my_app(cfg: DictConfig) -> None:
                     range(params["max_episode_length"] // params["action_repeat"])
                 )
                 for t in pbar:
-                    outputs = model.update_belief_and_act(
-                        test_envs,
-                        belief,
-                        posterior_state,
-                        action,
-                        observation.to(device=device),
-                    )
                     (
                         belief,
                         posterior_state,
@@ -211,7 +193,13 @@ def my_app(cfg: DictConfig) -> None:
                         next_observation,
                         reward,
                         done,
-                    ) = outputs
+                    ) = model.update_belief_and_act(
+                        test_envs,
+                        belief,
+                        posterior_state,
+                        action,
+                        observation.to(device=device),
+                    )
 
                     total_rewards += reward.numpy()
 

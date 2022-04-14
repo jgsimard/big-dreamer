@@ -17,8 +17,8 @@ episodes: 1000
 seed_episodes: 5
 collect_interval: 100
 batch_size: 50
-# chunk_size: 50
-chunk_size: 18
+# seq_len: 50
+seq_len: 18
 worldmodel_LogProbLoss: False
 free_nats: 3.0
 bit_depth: 5
@@ -53,3 +53,5 @@ kl_balance:  0.8
 kl_loss_weight: 1.0 # 0.1 for dreamerV2
 
 latent_distribution: "Gaussian" # so far Gaussian, Categorial
+discrete_latent_dimensions: 32
+discrete_latent_classes: 32

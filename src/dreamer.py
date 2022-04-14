@@ -1,5 +1,7 @@
+from typing import Tuple, Dict, Any
+
 import torch
-from torch import optim, nn
+from torch import optim, nn, Tensor
 from torch.distributions import Normal
 import torch.distributions as D
 from torch.distributions.transformed_distribution import TransformedDistribution
@@ -7,7 +9,7 @@ from torch.distributions.transformed_distribution import TransformedDistribution
 
 from models import ActorModel, bottle, CriticModel, TanhBijector, SampleDist
 from planet import Planet
-from utils import FreezeParameters, device, cat
+from utils import FreezeParameters, device, cat, prefill, stack
 
 
 class Dreamer(Planet):
@@ -16,7 +18,7 @@ class Dreamer(Planet):
     an actor-critic to select the next action.
     """
 
-    def __init__(self, params, env):
+    def __init__(self, params: Dict[str, Any], env):
         super().__init__(params, env)
 
         self.actor_model = torch.jit.script(
@@ -53,35 +55,35 @@ class Dreamer(Planet):
         self.discount = params["discount"]
         self.disclam = params["disclam"]
 
-    def imagine_ahead(self, prev_state, prev_belief):
+    def imagine_ahead(
+            self,
+            prev_state: Tensor,
+            prev_belief: Tensor
+    ) -> Tuple[Tensor, Tensor, Tuple[Tensor, ...]]:
         """
-        imagine_ahead is the function to draw the imaginary tracjectory using the
+        imagine_ahead is the function to draw the imaginary trajectory using the
         dynamics model, actor, critic.
 
-        Input:  current state (posterior), current belief (hidden), policy, transition_model
-                torch.Size([50, 30]) torch.Size([50, 200])
-        Output: generated trajectory of features includes beliefs, prior_states, prior_means,
+        :param prev_state:
+        :param prev_belief:
+        :return: generated trajectory of features includes beliefs, prior_states, prior_means,
                 prior_std_devs
-                torch.Size([49, 50, 200]) torch.Size([49, 50, 30])
-                torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
         """
         flatten = lambda x: x.view([-1] + list(x.size()[2:]))
         prev_belief = flatten(prev_belief)
         prev_state = flatten(prev_state)
 
         # Create lists for hidden states
-        # (cannot use single tensor as buffer because autograd won't work with inplace writes)
-        T = self.planning_horizon
-        beliefs, prior_states, prior_means, prior_std_devs = (
-            [torch.empty(0)] * T,
-            [torch.empty(0)] * T,
-            [torch.empty(0)] * T,
-            [torch.empty(0)] * T,
-        )
-        beliefs[0], prior_states[0] = prev_belief, prev_state
+        beliefs = prefill(self.planning_horizon)
+        prior_states = prefill(self.planning_horizon)
+        prior_means = prefill(self.planning_horizon)
+        prior_std_devs = prefill(self.planning_horizon)
+
+        beliefs[0] = prev_belief
+        prior_states[0] = prev_state
 
         # Loop over time sequence
-        for t in range(T - 1):
+        for t in range(self.planning_horizon - 1):
             _state = prior_states[t]
             actions = self.get_action(beliefs[t].detach(), _state.detach())
 
@@ -90,23 +92,31 @@ class Dreamer(Planet):
             beliefs[t + 1] = self.transition_model.rnn(hidden, beliefs[t])
 
             # Compute state prior by applying transition dynamics
-            (
-                prior_means[t + 1],
-                prior_std_devs[t + 1],
-            ) = self.transition_model.belief_prior(beliefs[t + 1])
-            prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[
-                t + 1
-            ] * torch.randn_like(prior_means[t + 1])
+            if self.latent_distribution == "Gaussian":
+                (
+                    prior_means[t + 1],
+                    prior_std_devs[t + 1]
+                ) = self.transition_model.belief_prior(beliefs[t + 1])
+                prior_states_noise = prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])
+                prior_states[t + 1] = prior_means[t + 1] + prior_states_noise
+            elif self.latent_distribution == "Categorical":
+                pass
 
-        # Return new hidden states
-        return (
-            torch.stack(beliefs[1:], dim=0),
-            torch.stack(prior_states[1:], dim=0),
-            torch.stack(prior_means[1:], dim=0),
-            torch.stack(prior_std_devs[1:], dim=0),
-        )
+        beliefs = stack(beliefs)
+        prior_states = stack(prior_states)
 
-    def update_actor_critic(self, posterior_states, beliefs) -> dict:
+        if self.latent_distribution == "Gaussian":
+            prior_params = (stack(prior_means), stack(prior_std_devs))
+        elif self.latent_distribution == "Categorical":
+            pass
+
+        return beliefs, prior_states, prior_params
+
+    def update_actor_critic(
+            self,
+            posterior_states: Tensor,
+            beliefs:Tensor
+    ) -> Dict[str, float]:
         """
         Used to update the actor and critic models.
         """
@@ -122,9 +132,7 @@ class Dreamer(Planet):
             actor_beliefs = beliefs.detach()
 
         with FreezeParameters(self.model_modules):
-            imged_belief, imged_prior_state, _, _ = self.imagine_ahead(
-                actor_states, actor_beliefs
-            )
+            imged_belief, imged_prior_state, _ = self.imagine_ahead(actor_states, actor_beliefs)
 
         # Predict Rewards & Values
         with FreezeParameters(self.model_modules + [self.critic_model]):
@@ -172,7 +180,7 @@ class Dreamer(Planet):
 
         return logs
 
-    def train_step(self) -> dict:
+    def train_step(self) -> Dict[str, float]:
         """
         Used to train the model.
         """
@@ -189,7 +197,7 @@ class Dreamer(Planet):
         )  # dreamer addition
         return logs
 
-    def get_action(self, belief, state, deterministic=False):
+    def get_action(self, belief: Tensor, state: Tensor, deterministic: bool = False) -> Tensor:
         """
         Get action.
         """
