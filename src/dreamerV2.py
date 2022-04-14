@@ -2,7 +2,7 @@ from typing import Tuple
 
 import torch
 from torch import Tensor
-from torch.distributions import Normal, kl_divergence
+from torch.distributions import Normal, kl_divergence, OneHotCategoricalStraightThrough
 # import torch.distributions as D
 # from torch.distributions.transformed_distribution import TransformedDistribution
 
@@ -42,7 +42,14 @@ class DreamerV2(Dreamer):
             dist_prior = Normal(prior_means, prior_std_devs)
             dist_prior_detach = Normal(prior_means.detach(), prior_std_devs.detach())
         elif self.latent_distribution == "Categorical":
-            pass
+            posterior_logits, = posterior_params
+            prior_logits,  = prior_params
+
+            dist_post = OneHotCategoricalStraightThrough(logits=posterior_logits)
+            dist_post_detach = OneHotCategoricalStraightThrough(logits=posterior_logits.detach())
+
+            dist_prior = OneHotCategoricalStraightThrough(logits=prior_logits)
+            dist_prior_detach = OneHotCategoricalStraightThrough(logits=prior_logits.detach())
         else:
             raise NotImplementedError()
 
