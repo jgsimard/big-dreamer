@@ -21,7 +21,7 @@ class Dreamer(Planet):
     def __init__(self, params: Dict[str, Any], env):
         super().__init__(params, env)
 
-        self.actor_model = torch.jit.script(
+        self.actor = torch.jit.script(
             ActorModel(
                 self.belief_size,
                 self.state_size,
@@ -30,9 +30,9 @@ class Dreamer(Planet):
                 self.dense_activation_function,
             ).to(device)
         )
-        self.planner = self.actor_model
+        self.planner = self.actor
 
-        self.critic_model = torch.jit.script(
+        self.critic = torch.jit.script(
             CriticModel(
                 self.belief_size,
                 self.state_size,
@@ -42,12 +42,12 @@ class Dreamer(Planet):
         )
 
         self.actor_optimizer = optim.Adam(
-            self.actor_model.parameters(),
+            self.actor.parameters(),
             lr=params["actor_learning_rate"],
             eps=params["adam_epsilon"],
         )
         self.value_optimizer = optim.Adam(
-            self.critic_model.parameters(),
+            self.critic.parameters(),
             lr=params["value_learning_rate"],
             eps=params["adam_epsilon"],
         )
@@ -76,8 +76,12 @@ class Dreamer(Planet):
         # Create lists for hidden states
         beliefs = prefill(self.planning_horizon)
         prior_states = prefill(self.planning_horizon)
-        prior_means = prefill(self.planning_horizon)
-        prior_std_devs = prefill(self.planning_horizon)
+
+        if self.latent_distribution == "Gaussian":
+            prior_means = prefill(self.planning_horizon)
+            prior_std_devs = prefill(self.planning_horizon)
+        elif self.latent_distribution == "Categorical":
+            prior_logits = prefill(self.planning_horizon)
 
         beliefs[0] = prev_belief
         prior_states[0] = prev_state
@@ -92,15 +96,11 @@ class Dreamer(Planet):
             beliefs[t + 1] = self.transition_model.rnn(hidden, beliefs[t])
 
             # Compute state prior by applying transition dynamics
+            prior_states[t + 1], prior_params_ = self.transition_model.belief_prior(beliefs[t + 1])
             if self.latent_distribution == "Gaussian":
-                (
-                    prior_means[t + 1],
-                    prior_std_devs[t + 1]
-                ) = self.transition_model.belief_prior(beliefs[t + 1])
-                prior_states_noise = prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])
-                prior_states[t + 1] = prior_means[t + 1] + prior_states_noise
+                prior_means[t + 1], prior_std_devs[t + 1] = prior_params_
             elif self.latent_distribution == "Categorical":
-                pass
+                prior_logits[t + 1] = prior_params_
 
         beliefs = stack(beliefs)
         prior_states = stack(prior_states)
@@ -108,7 +108,7 @@ class Dreamer(Planet):
         if self.latent_distribution == "Gaussian":
             prior_params = (stack(prior_means), stack(prior_std_devs))
         elif self.latent_distribution == "Categorical":
-            pass
+            prior_params = (stack(prior_logits),)
 
         return beliefs, prior_states, prior_params
 
@@ -135,9 +135,9 @@ class Dreamer(Planet):
             imged_belief, imged_prior_state, _ = self.imagine_ahead(actor_states, actor_beliefs)
 
         # Predict Rewards & Values
-        with FreezeParameters(self.model_modules + [self.critic_model]):
+        with FreezeParameters(self.model_modules + [self.critic]):
             imged_reward = bottle(self.reward_model, (imged_belief, imged_prior_state))
-            value_pred = bottle(self.critic_model, (imged_belief, imged_prior_state))
+            value_pred = bottle(self.critic, (imged_belief, imged_prior_state))
 
         # Compute Values estimates
         returns = lambda_return(
@@ -155,7 +155,7 @@ class Dreamer(Planet):
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         nn.utils.clip_grad_norm_(
-            self.actor_model.parameters(), self.grad_clip_norm, norm_type=2
+            self.actor.parameters(), self.grad_clip_norm, norm_type=2
         )
         self.actor_optimizer.step()
 
@@ -165,7 +165,7 @@ class Dreamer(Planet):
             target_return = returns.detach()
         # detach the input tensor from the transition network.
         value_dist = Normal(
-            bottle(self.critic_model, (value_beliefs, value_prior_states)), 1
+            bottle(self.critic, (value_beliefs, value_prior_states)), 1
         )
         value_loss = -value_dist.log_prob(target_return).mean(dim=(0, 1))
         logs["value_loss"] = value_loss.item()
@@ -174,7 +174,7 @@ class Dreamer(Planet):
         self.value_optimizer.zero_grad()
         value_loss.backward()
         nn.utils.clip_grad_norm_(
-            self.critic_model.parameters(), self.grad_clip_norm, norm_type=2
+            self.critic.parameters(), self.grad_clip_norm, norm_type=2
         )
         self.value_optimizer.step()
 

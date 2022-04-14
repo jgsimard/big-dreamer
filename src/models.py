@@ -109,7 +109,6 @@ class CategoricalBeliefModel(nn.Module):
         # https://arxiv.org/abs/1308.3432
         dist = D.OneHotCategoricalStraightThrough(logits=logits)
         state = dist.rsample()
-
         return state, (logits,)
 
 
@@ -221,8 +220,8 @@ class TransitionModel(nn.Module):
             posterior_means = prefill(T)
             posterior_std_devs = prefill(T)
         elif self.latent_distribution == "Categorical":
-            prior_means = prefill(T)
-            posterior_means = prefill(T)
+            prior_logits = prefill(T)
+            posterior_logits = prefill(T)
 
         beliefs[0] = init_belief
         prior_states[0] = init_state
@@ -245,7 +244,7 @@ class TransitionModel(nn.Module):
             if self.latent_distribution == "Gaussian":
                 prior_means[t + 1], prior_std_devs[t + 1] = prior_params_
             elif self.latent_distribution == "Categorical":
-                pass
+                prior_logits[t + 1] = prior_params_
 
             if observations is not None:
                 # Compute state posterior by applying transition dynamics and using
@@ -256,9 +255,9 @@ class TransitionModel(nn.Module):
                 if self.latent_distribution == "Gaussian":
                     posterior_means[t + 1], posterior_std_devs[t + 1] = post_params_
                 elif self.latent_distribution == "Categorical":
-                    pass
-        # Return new hidden states
+                    posterior_logits[t + 1] = post_params_
 
+        # Return new hidden states
         beliefs = stack(beliefs)
         prior_states = stack(prior_states)
 
@@ -266,7 +265,7 @@ class TransitionModel(nn.Module):
         if self.latent_distribution == "Gaussian":
             prior_params = (stack(prior_means), stack(prior_std_devs))
         elif self.latent_distribution == "Categorical":
-            pass
+            prior_params = (stack(prior_logits),)
 
         # add posterior computations if observations were present
         if observations is not None:
@@ -276,7 +275,7 @@ class TransitionModel(nn.Module):
             if self.latent_distribution == "Gaussian":
                 posterior_params = (stack(posterior_means), stack(posterior_std_devs))
             elif self.latent_distribution == "Categorical":
-                pass
+                posterior_params = (stack(posterior_logits))
         else:
             posterior_states, posterior_params = None, None
 
