@@ -13,12 +13,10 @@ rsync -av --relative "$1" $SLURM_TMPDIR --exclude ".git"
 cd $SLURM_TMPDIR/"$1"
 
 # Setup environment
-module purge
-module load StdEnv/2020
 module load python/3.7
-export PYTHONUNBUFFERED=1
-virtualenv $SLURM_TMPDIR/venv
-source $SLURM_TMPDIR/venv/bin/activate
-python -m pip install requirements.txt
+source bigdreamer_env/bin/activate
+
+export LD_LIBRARY_PATH=~/.mujoco/mujoco200/bin
+
 
 python src/main.py --config_name="$2" # write over writes here
