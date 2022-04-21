@@ -26,3 +26,4 @@ wandb
 pre-commit
 pylint
 dm-control
+torchtyping

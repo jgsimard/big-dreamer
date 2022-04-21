@@ -1,8 +1,8 @@
 import torch
-from torch import jit
+from torch import nn
 
 
-class MPCPlanner(jit.ScriptModule):
+class MPCPlanner(nn.Module):
     """
     Model-predictive control planner with cross-entropy method and learned transition model.
     """
@@ -32,7 +32,6 @@ class MPCPlanner(jit.ScriptModule):
         self.optimisation_iters = optimisation_iters
         self.candidates, self.top_candidates = candidates, top_candidates
 
-    @jit.script_method
     def forward(self, belief, state):
         """
         Plan actions for the given belief and state.

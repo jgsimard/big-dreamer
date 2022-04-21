@@ -330,9 +330,9 @@ class EnvBatcher:
     Wrapper for batching environments together.
     """
 
-    def __init__(self, env_class, env_args, env_kwargs, n) -> None:
+    def __init__(self, env_class, env_params, n) -> None:
         self.n = n
-        self.envs = [env_class(*env_args, **env_kwargs) for _ in range(n)]
+        self.envs = [env_class(env_params) for _ in range(n)]
         self.dones = [True] * n
 
     def reset(self) -> List[np.ndarray]:

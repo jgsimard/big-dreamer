@@ -9,6 +9,7 @@ from plotly.graph_objs import Scatter
 from plotly.graph_objs.scatter import Line
 from torch.nn import Module
 from torch import Tensor
+from torch import nn
 
 
 def cat(x: Tensor, y: Tensor) -> Tensor:
@@ -177,7 +178,6 @@ class ActivateParameters:
 
     def __enter__(self):
         for param in get_parameters(self.modules):
-            # print(param.requires_grad)
             param.requires_grad = True
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -339,3 +339,42 @@ def images_to_observation(images, bit_depth, observation_shape) -> np.ndarray:
 
     # Add batch dimension
     return images.unsqueeze(dim=0)
+
+
+def build_mlp(
+        input_size: int,
+        hidden_size: int,
+        output_size: int,
+        n_layers: int,
+        activation: str = 'ELU',
+        output_activation: str = 'Identity',
+) -> nn.Sequential:
+    """
+        Builds a feedforward neural network
+        arguments:
+            input_placeholder: placeholder variable for the state (batch_size, input_size)
+            scope: variable scope of the network
+            n_layers: number of hidden layers
+            size: dimension of each hidden layer
+            activation: activation of each hidden layer
+            input_size: size of the input layer
+            output_size: size of the output layer
+            output_activation: activation of the output layer
+        returns:
+            output_placeholder: the result of a forward pass through the hidden layers
+                                + the output layer
+    """
+    if isinstance(activation, str):
+        activation = getattr(nn, activation)
+    if isinstance(output_activation, str):
+        output_activation = getattr(nn, output_activation)
+
+    layers = []
+    in_size = input_size
+    for _ in range(n_layers):
+        layers.append(nn.Linear(in_size, hidden_size))
+        layers.append(activation())
+        in_size = hidden_size
+    layers.append(nn.Linear(in_size, output_size))
+    layers.append(output_activation())
+    return nn.Sequential(*layers)

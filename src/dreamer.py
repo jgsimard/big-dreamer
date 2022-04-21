@@ -21,34 +21,34 @@ class Dreamer(Planet):
     def __init__(self, params: Dict[str, Any], env):
         super().__init__(params, env)
 
-        self.actor = torch.jit.script(
-            ActorModel(
-                self.belief_size,
-                self.state_size,
-                self.hidden_size,
-                self.action_size,
-                self.dense_activation_function,
-            ).to(device)
-        )
+        self.actor = ActorModel(
+            self.belief_size,
+            self.state_size,
+            self.hidden_size,
+            self.action_size,
+            self.dense_activation_function,
+        ).to(device)
         self.planner = self.actor
 
-        self.critic = torch.jit.script(
-            CriticModel(
-                self.belief_size,
-                self.state_size,
-                self.hidden_size,
-                self.dense_activation_function,
-            ).to(device)
-        )
+        self.critic = CriticModel(
+            self.belief_size,
+            self.state_size,
+            self.hidden_size,
+            self.dense_activation_function,
+        ).to(device)
+
+        if params['jit']:
+            self.actor = torch.jit.script(self.actor)
+            self.critic = torch.jit.script(self.critic)
 
         self.actor_optimizer = optim.Adam(
             self.actor.parameters(),
-            lr=params["actor_learning_rate"],
+            lr=params['ActorCritic']["actor_learning_rate"],
             eps=params["adam_epsilon"],
         )
         self.value_optimizer = optim.Adam(
             self.critic.parameters(),
-            lr=params["value_learning_rate"],
+            lr=params['ActorCritic']["value_learning_rate"],
             eps=params["adam_epsilon"],
         )
 

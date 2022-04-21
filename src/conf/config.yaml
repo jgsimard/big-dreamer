@@ -4,36 +4,33 @@ seed: 0
 disable_cuda: false
 env: 'Pendulum-v0'
 max_episode_length: 1000
-experience_size: 1000000   # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
-cnn_activation_function: 'ReLU'
+experience_size: 1000000
+cnn_activation_function: 'ELU'
 dense_activation_function: 'ELU'
-embedding_size: 1024  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
+embedding_size: 1024
 hidden_size: 200
+n_layers: 4
 belief_size: 200
 state_size: 30
 action_repeat: 2
 action_noise: 0.3
 episodes: 1000
-seed_episodes: 5
+seed_episodes: 1
 collect_interval: 100
 batch_size: 50
-# seq_len: 50
-seq_len: 18
-worldmodel_LogProbLoss: False
+seq_len: 50
 free_nats: 3.0
 bit_depth: 5
 model_learning_rate: 1e-3
-actor_learning_rate: 8e-5
-value_learning_rate: 8e-5
-learning_rate_schedule: 0
+
 adam_epsilon: 1e-7
 grad_clip_norm: 100.0
 planning_horizon: 15
 discount: 0.99
 disclam: 0.95
-optimisation_iters: 10
-candidates: 1000
-top_candidates: 100
+
+
+
 test: False
 test_interval: 25
 test_episodes: 10
@@ -49,9 +46,21 @@ wandb_project : null # 'test-project'
 fps: 10
 
 # Dreamer V2
+
 kl_balance:  0.8
 kl_loss_weight: 1.0 # 0.1 for dreamerV2
 
 latent_distribution: "Gaussian" # so far Gaussian, Categorial
 discrete_latent_dimensions: 32
 discrete_latent_classes: 32
+
+jit: False
+
+MPC:
+ optimisation_iters: 10
+ candidates: 1000
+ top_candidates: 100
+
+ActorCritic:
+ actor_learning_rate: 8e-5
+ value_learning_rate: 8e-5

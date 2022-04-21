@@ -8,6 +8,7 @@ from omegaconf import DictConfig, open_dict
 from tqdm import tqdm
 from torchvision.utils import make_grid
 
+
 from planet import Planet
 from dreamer import Dreamer
 from dreamerV2 import DreamerV2
@@ -123,14 +124,6 @@ def my_app(cfg: DictConfig) -> None:
             t = 0
 
             for t in pbar:
-                outputs = model.update_belief_and_act(
-                    env,
-                    belief,
-                    posterior_state,
-                    action,
-                    observation.to(device=device),
-                    explore=True,
-                )
                 (
                     belief,
                     posterior_state,
@@ -138,7 +131,14 @@ def my_app(cfg: DictConfig) -> None:
                     next_observation,
                     reward,
                     done,
-                ) = outputs
+                ) = model.update_belief_and_act(
+                    env,
+                    belief,
+                    posterior_state,
+                    action,
+                    observation.to(device=device),
+                    explore=True,
+                )
 
                 # store the new stuff
                 model.replay_buffer.append(observation, action, reward, done)
@@ -165,7 +165,7 @@ def my_app(cfg: DictConfig) -> None:
             model.eval()
 
             # Initialise parallelised test environments
-            test_envs = EnvBatcher(Env, params, {}, params["test_episodes"])
+            test_envs = EnvBatcher(Env, params, params["test_episodes"])
 
             with torch.no_grad():
                 observation = test_envs.reset()
