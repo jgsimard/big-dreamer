@@ -69,7 +69,7 @@ class MPCPlanner(nn.Module):
             )
             # Sample next states
             # [12, 1000, 200] [12, 1000, 30] : 12 horizon steps; 1000 candidates
-            beliefs, states, _, _ = self.transition_model(state, actions, belief)
+            beliefs, states, _, _, _ = self.transition_model(state, actions, belief)
             # Calculate expected returns (technically sum of rewards over planning horizon)
             # output from r-model[12000]->view[12, 1000]->sum[1000]
             returns = (

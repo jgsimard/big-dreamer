@@ -48,6 +48,11 @@ class ExperienceReplay:
 
         valid_idx = False
         while not valid_idx:
+            print("HEREE")
+            print('self.size', self.size)
+            print('self.idx', self.idx)
+            print('L', L)
+
             idx = np.random.randint(0, self.size if self.full else self.idx - L)
             idxs = np.arange(idx, idx + L) % self.size
             valid_idx = (
