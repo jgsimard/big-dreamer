@@ -5,8 +5,8 @@ import numpy as np
 import torch
 
 import gym
-from dm_control import suite
-from dm_control.suite.wrappers import pixels
+# from dm_control import suite
+# from dm_control.suite.wrappers import pixels
 
 from utils import images_to_observation
 
