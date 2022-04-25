@@ -141,7 +141,7 @@ def my_app(cfg: DictConfig) -> None:
                 )
 
                 # store the new stuff
-                model.replay_buffer.append(observation, action, reward, done)
+                model.buffer.append(observation, action, reward, done)
 
                 total_reward += reward
                 observation = next_observation

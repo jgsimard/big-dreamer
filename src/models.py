@@ -8,15 +8,15 @@ import torch.nn.functional as F
 import torch.distributions as D
 
 
-# from torchtyping import TensorType, patch_typeguard
-# from typeguard import typechecked
+from torchtyping import TensorType, patch_typeguard
+from typeguard import typechecked
 
 from utils import cat, stack, prefill, build_mlp
 
 
 Activation = Union[str, nn.Module]
 
-# patch_typeguard()
+patch_typeguard()
 
 
 
@@ -184,13 +184,14 @@ class TransitionModel(nn.Module):
             self.belief_posterior,
         ]
 
+    @typechecked
     def forward(
         self,
-        init_state: Tensor,
-        actions: Tensor,
-        init_belief: Tensor,
-        embeddings: Optional[Tensor] = None,
-        nonterminals: Optional[Tensor] = None,
+        init_state: TensorType['batch_size', 'state_size'],
+        actions: TensorType['seq_len', 'batch_size', 'action_size'],
+        init_belief: TensorType['batch_size', 'belief_size'],
+        embeddings: Optional[TensorType['seq_len', 'batch_size', 'embedding_size']] = None,
+        nonterminals: Optional[TensorType['seq_len', 'batch_size', 1]] = None,
     ) -> Tuple[Tensor, Tensor, Tuple[Tensor, ...], Optional[Tensor], Optional[Tuple[Tensor, ...]]]:
         """
         L=Chunk size, B=Batch size, Hi=Hidden size, Be=Belief size, S=State Size, A=Action size
@@ -346,63 +347,86 @@ class ObservationModel(nn.Module):
         return x
 
 
-class RewardModel(nn.Module):
+class DenseModel(nn.Module):
     """
-    Reward model.
+    Dense model.
     """
 
     def __init__(
-        self,
-        belief_size: int,
-        state_size: int,
-        hidden_size: int,
-        activation: str = "ELU",
-        n_layers:int = 4
+            self,
+            belief_size: int,
+            state_size: int,
+            hidden_size: int,
+            activation: str = "ELU",
+            n_layers: int = 4,
+            distribution: str = 'normal'
     ) -> None:
         super().__init__()
-        self.model = build_mlp(belief_size+state_size, hidden_size, 1, n_layers, activation)
+        self.model = build_mlp(belief_size + state_size, hidden_size, 1, n_layers, activation)
+        self.distribution = distribution
 
     def forward(self, belief: Tensor, state: Tensor) -> Tensor:
         """
         Forward pass.
         """
-        batch_shape = belief.shape[:-1]  # L,B or just B
         x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
         x = self.model(x)
-        x = x.view(*batch_shape)
         return x
-        # return self.model(cat(belief, state)).squeeze(dim=1)
+
+# class RewardModel(nn.Module):
+#     """
+#     Reward model.
+#     """
+#
+#     def __init__(
+#         self,
+#         belief_size: int,
+#         state_size: int,
+#         hidden_size: int,
+#         activation: str = "ELU",
+#         n_layers:int = 4
+#     ) -> None:
+#         super().__init__()
+#         self.model = build_mlp(belief_size+state_size, hidden_size, 1, n_layers, activation)
+#
+#     def forward(self, belief: Tensor, state: Tensor) -> Tensor:
+#         """
+#         Forward pass.
+#         """
+#         x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
+#         x = self.model(x)
+#         return x
 
 
-class CriticModel(nn.Module):
-    """
-    Critic model.
-    """
-
-    def __init__(
-        self,
-        belief_size: int,
-        state_size: int,
-        hidden_size: int,
-        activation: Optional[str] = "ELU",
-        n_layers: int = 4
-    ) -> None:
-        super().__init__()
-
-        self.model = build_mlp(
-            input_size = belief_size + state_size,
-            output_size = 1,
-            n_layers = n_layers,
-            hidden_size = hidden_size,
-            activation = activation
-        )
-    def forward(self, belief, state):
-        """
-        Forward pass.
-        Input: belief, state
-        """
-
-        return self.model(cat(belief, state)).squeeze(dim=1)
+# class CriticModel(nn.Module):
+#     """
+#     Critic model.
+#     """
+#
+#     def __init__(
+#         self,
+#         belief_size: int,
+#         state_size: int,
+#         hidden_size: int,
+#         activation: Optional[str] = "ELU",
+#         n_layers: int = 4
+#     ) -> None:
+#         super().__init__()
+#
+#         self.model = build_mlp(
+#             input_size = belief_size + state_size,
+#             output_size = 1,
+#             n_layers = n_layers,
+#             hidden_size = hidden_size,
+#             activation = activation
+#         )
+#     def forward(self, belief, state):
+#         """
+#         Forward pass.
+#         Input: belief, state
+#         """
+#
+#         return self.model(cat(belief, state)).squeeze(dim=1)
 
 
 class ActorModel(nn.Module):
@@ -417,16 +441,23 @@ class ActorModel(nn.Module):
         hidden_size: int,
         action_size: int,
         activation_function: str = "ELU",
+        action_distribution: str = 'Gaussian',
         min_std: float = 1e-4,
         init_std: float = 5,
         mean_scale: float = 5,
         n_layers: int = 4
     ) -> None:
         super().__init__()
+        if action_distribution == 'Gaussian':
+            output_size = 2 * action_size
+        elif action_distribution == 'Categorical':
+            output_size = action_size
+        else:
+            NotImplementedError()
 
         self.model = build_mlp(
             input_size=belief_size + state_size,
-            output_size= 2 * action_size,
+            output_size= output_size,
             n_layers=n_layers,
             hidden_size=hidden_size,
             activation=activation_function
@@ -436,18 +467,27 @@ class ActorModel(nn.Module):
         self._init_std = init_std
         self._mean_scale = mean_scale
         self.raw_init_std = torch.log(torch.exp(torch.tensor(self._init_std)) - 1)
+        self.action_distribution = action_distribution
 
     def forward(self, belief, state):
         """
         Forward pass.
         Input: belief, state
         """
-        action = self.model(cat(belief, state)).squeeze(dim=1)
+        out_model = self.model(cat(belief, state)).squeeze(dim=1)
 
-        action_mean, action_std_dev = torch.chunk(action, 2, dim=1)
-        action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
-        action_std = F.softplus(action_std_dev + self.raw_init_std) + self._min_std
-        return action_mean, action_std
+        if self.action_distribution == 'Gaussian':
+            action_mean, action_std_dev = torch.chunk(out_model, 2, dim=1)
+            action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
+            action_std = F.softplus(action_std_dev + self.raw_init_std) + self._min_std
+            return action_mean, action_std
+        if self.action_distribution == 'Categorical':
+            action_dist = self.get_action_dist(out_model)
+            action = action_dist.sample()
+            action = action + action_dist.probs - action_dist.probs.detach()
+            return action, action_dist
+
+        raise NotImplementedError()
 
 
 class CnnImageEncoder(nn.Module):

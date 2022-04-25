@@ -7,14 +7,6 @@ class MPCPlanner(nn.Module):
     Model-predictive control planner with cross-entropy method and learned transition model.
     """
 
-    __constants__ = [
-        "action_size",
-        "planning_horizon",
-        "optimisation_iters",
-        "candidates",
-        "top_candidates",
-    ]
-
     def __init__(
         self,
         action_size,
@@ -26,7 +18,8 @@ class MPCPlanner(nn.Module):
         reward_model,
     ):
         super().__init__()
-        self.transition_model, self.reward_model = transition_model, reward_model
+        self.transition_model = transition_model
+        self.reward_model = reward_model
         self.action_size = action_size
         self.planning_horizon = planning_horizon
         self.optimisation_iters = optimisation_iters

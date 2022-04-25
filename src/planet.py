@@ -1,6 +1,8 @@
 import os
 
 from typing import Any, Dict, List, Tuple
+from collections import namedtuple
+
 
 import torch
 from torch import Tensor, optim, nn
@@ -12,14 +14,14 @@ from typeguard import typechecked
 
 from env import EnvBatcher
 from memory import ExperienceReplay
-from models import TransitionModel, ObservationModel, RewardModel, CnnImageEncoder
+from models import TransitionModel, ObservationModel, DenseModel, CnnImageEncoder
 from utils import device
 from planner import MPCPlanner
 from base_agent import BaseAgent
 
-
 patch_typeguard()
 
+DiscreteState = namedtuple('DiscreteState', [])
 
 class Planet(BaseAgent):
     """
@@ -76,7 +78,7 @@ class Planet(BaseAgent):
         Initialize the replay buffer and models.
         """
 
-        self.replay_buffer = ExperienceReplay(
+        self.buffer = ExperienceReplay(
             self.experience_size,
             env.action_size,
             self.bit_depth,
@@ -136,7 +138,7 @@ class Planet(BaseAgent):
             while not done:
                 action = self.env.sample_random_action()
                 next_observation, reward, done = self.env.step(action)
-                self.replay_buffer.append(observation, action, reward, done)
+                self.buffer.append(observation, action, reward, done)
                 observation = next_observation
                 t += 1
 
@@ -164,7 +166,14 @@ class Planet(BaseAgent):
             self.cnn_activation_function,
         ).to(device=device)
 
-        self.reward_model = RewardModel(
+        # self.reward_model = RewardModel(
+        #     self.belief_size,
+        #     self.state_size,
+        #     self.hidden_size,
+        #     self.dense_activation_function,
+        # ).to(device=device)
+
+        self.reward_model = DenseModel(
             self.belief_size,
             self.state_size,
             self.hidden_size,
@@ -242,7 +251,8 @@ class Planet(BaseAgent):
         """
         means = self.reward_model(beliefs, posterior_states)
         reward_dist = Independent(Normal(means, 1), 1)
-        reward_loss = -reward_dist.log_prob(rewards).mean()
+        print(rewards.shape)
+        reward_loss = -reward_dist.log_prob(rewards.unsqueeze(dim=-1)).mean()
         return reward_loss
 
     def _kl_loss(
@@ -280,7 +290,7 @@ class Planet(BaseAgent):
         ####################
 
         # 1) Draw sequences chunks
-        observations, actions, rewards, nonterminals = self.replay_buffer.sample(
+        observations, actions, rewards, nonterminals = self.buffer.sample(
             self.batch_size, self.seq_len
         )
 
@@ -327,10 +337,6 @@ class Planet(BaseAgent):
         nn.utils.clip_grad_norm_(self.model_params, self.grad_clip_norm, norm_type=2)
         self.model_optimizer.step()
 
-        # for dreamer, ugly for the moment
-        self.posterior_states = posterior_states
-        self.beliefs = beliefs
-
         return log
 
     def update_belief_and_act(
@@ -353,10 +359,11 @@ class Planet(BaseAgent):
         posterior_state = posterior_state.squeeze(dim=0)
 
         # Get action from planner(q(s_t|o≤t,a<t), p)
-        action = self.get_action(belief, posterior_state)
+        action, _ = self.get_action(belief, posterior_state)
 
         if explore:
             # Add gaussian exploration noise on top of the sampled action
+            # print(self.action_noise, action)
             action = torch.clamp(Normal(action, self.action_noise).rsample(), -1, 1)
 
         # Perform environment step (action repeats handled internally)

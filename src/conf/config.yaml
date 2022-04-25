@@ -47,12 +47,13 @@ fps: 10
 
 # Dreamer V2
 
-kl_balance:  0.8
+kl_balance:  -1
 kl_loss_weight: 1.0 # 0.1 for dreamerV2
 
 latent_distribution: "Gaussian" # so far Gaussian, Categorial
 discrete_latent_dimensions: 32
 discrete_latent_classes: 32
+action_distribution: "Gaussian" # so far Gaussian, Categorial
 
 jit: False
 
@@ -64,3 +65,8 @@ MPC:
 ActorCritic:
  actor_learning_rate: 8e-5
  value_learning_rate: 8e-5
+ entropy_weight: 1.0
+ actor_gradient: 'dynamics'  # 'reinforce' or 'dynamics'
+
+use_discount: False
+discount_weight: 5.0
