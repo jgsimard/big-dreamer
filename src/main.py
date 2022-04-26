@@ -81,6 +81,7 @@ def my_app(cfg: DictConfig) -> None:
         )
 
     env_steps, num_episodes = model.randomly_initialize_replay_buffer()
+    print(f"Initialized with {num_episodes} episodes and {env_steps} steps")
 
     ###################
     # RUN TRAINING
@@ -89,10 +90,15 @@ def my_app(cfg: DictConfig) -> None:
 
     # Training
     for episode in tqdm(
-        range(num_episodes + 1, params["episodes"] + 1),
-        total=params["episodes"],
-        initial=num_episodes + 1,
+            range(num_episodes + 1, num_episodes + params["episodes"] + 1),
+            total=num_episodes + params["episodes"],
+            initial=num_episodes + 1,
     ):
+    # for episode in tqdm(
+    #     range(num_episodes + 1, params["episodes"] + 1),
+    #     total=params["episodes"],
+    #     initial=num_episodes + 1,
+    # ):
         # Model fitting
         print("training loop")
         for _ in tqdm(range(params["collect_interval"])):
@@ -182,10 +188,10 @@ def my_app(cfg: DictConfig) -> None:
                     params["test_episodes"], env.action_size, device=device
                 )
 
-                pbar = tqdm(
+                pbar_test = tqdm(
                     range(params["max_episode_length"] // params["action_repeat"])
                 )
-                for t in pbar:
+                for t in pbar_test:
                     (
                         belief,
                         posterior_state,
@@ -203,25 +209,28 @@ def my_app(cfg: DictConfig) -> None:
 
                     total_rewards += reward.numpy()
 
-                    # Collect real vs. predicted frames for video
-                    video_frames.append(
-                        make_grid(
-                            torch.cat(
-                                [
-                                    observation,
-                                    model.observation_model(
-                                        belief, posterior_state
-                                    ).cpu(),
-                                ],
-                                dim=3,
-                            )
-                            + 0.5,
-                            nrow=5,
-                        ).numpy()
-                    )  # Decentre
+                    if params['pixel_observation']:
+                        # Collect real vs. predicted frames for video
+                        video_frames.append(
+                            make_grid(
+                                torch.cat(
+                                    [
+                                        observation,
+                                        model.observation_model(
+                                            belief, posterior_state
+                                        ).cpu(),
+                                    ],
+                                    dim=3,
+                                )
+                                + 0.5,
+                                nrow=5,
+                            ).numpy()
+                        )  # Decentre
                     observation = next_observation
+
+                    pbar_test.set_description("Testing...")
                     if done.sum().item() == params["test_episodes"]:
-                        pbar.close()
+                        pbar_test.close()
                         test_envs.close()
                         break
 
@@ -230,14 +239,16 @@ def my_app(cfg: DictConfig) -> None:
 
             test_envs.close()
 
-        # TODO : Save Model
-        if episode % params["log_video_freq"] == 0 and params["log_video_freq"] != -1:
-            # log eval videos
-            logger.log_video(
-                np.expand_dims(np.stack(video_frames), axis=0),
-                name="Eval_rollout",
-                step=episode,
-            )
+            # TODO : Save Model
+            if episode % params["log_video_freq"] == 0 \
+                    and params["log_video_freq"] != -1 \
+                    and params['pixel_observation']:
+                # log eval videos
+                logger.log_video(
+                    np.expand_dims(np.stack(video_frames), axis=0),
+                    name="Eval_rollout",
+                    step=episode,
+                )
 
         if episode % params["log_freq"] == 0:
             print("Perform Logging")

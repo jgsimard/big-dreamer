@@ -57,7 +57,15 @@ class BaseEnv:
     Base class for our environments.
     """
 
-    def __init__(self, env, seed, max_episode_length, action_repeat, bit_depth) -> None:
+    def __init__(
+            self,
+            env,
+            seed,
+            max_episode_length,
+            action_repeat,
+            bit_depth,
+            pixel_observation
+    ) -> None:
         """
         Initialises base environment attributes.
         """
@@ -65,6 +73,8 @@ class BaseEnv:
         self.seed = seed
         self.max_episode_length = max_episode_length
         self.action_repeat = action_repeat
+
+        self.pixel_observation = pixel_observation
 
         self.bit_depth = bit_depth
         self.t = 0
@@ -109,8 +119,9 @@ class BaseEnv:
         """
         Returns the size of the observation.
         """
-
-        return (self.obs_image_depth, self.obs_image_height, self.obs_image_width)
+        if self.pixel_observation:
+            return self.obs_image_depth, self.obs_image_height, self.obs_image_width
+        return self._env.observation_space.shape[0]
 
     @property
     def action_size(self):
@@ -227,14 +238,13 @@ class GymEnv(BaseEnv):
     """
 
     def __init__(
-        self, env, seed, max_episode_length, action_repeat, bit_depth
+        self, env, seed, max_episode_length, action_repeat, bit_depth, pixel_observation
     ):
-        super().__init__(env, seed, max_episode_length, action_repeat, bit_depth)
+        super().__init__(env, seed, max_episode_length, action_repeat, bit_depth, pixel_observation)
 
         self._env = gym.make(env)
         self._env.seed(seed)
         self._env.action_space.seed(seed)
-
 
     def reset(self) -> np.ndarray:
         """
@@ -242,13 +252,14 @@ class GymEnv(BaseEnv):
         """
 
         self.t = 0
-        self._env.reset()
-
-        return images_to_observation(
-            self._env.render(mode="rgb_array"),
-            self.bit_depth,
-            (self.obs_image_height, self.obs_image_width)
-        )
+        state = self._env.reset()
+        if self.pixel_observation:
+            return images_to_observation(
+                self._env.render(mode="rgb_array"),
+                self.bit_depth,
+                (self.obs_image_height, self.obs_image_width)
+            )
+        return torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
 
     def step(self, action) -> Tuple[np.ndarray, float, bool]:
         """
@@ -259,18 +270,20 @@ class GymEnv(BaseEnv):
         reward = 0
 
         for _ in range(self.action_repeat):
-            _, reward_k, done, _ = self._env.step(action)
+            state, reward_k, done, _ = self._env.step(action)
             reward += reward_k
             self.t += 1  # Increment internal timer
             done = done or self.t == self.max_episode_length
             if done:
                 break
-
-        observation = images_to_observation(
-            self._env.render(mode="rgb_array"),
-            self.bit_depth,
-            (self.obs_image_height, self.obs_image_width)
-        )
+        if self.pixel_observation:
+            observation = images_to_observation(
+                self._env.render(mode="rgb_array"),
+                self.bit_depth,
+                (self.obs_image_height, self.obs_image_width)
+            )
+        else:
+            observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
 
         return observation, reward, done
 
@@ -314,9 +327,10 @@ def Env(params) -> BaseEnv:
     max_episode_length = params["max_episode_length"]
     action_repeat = params["action_repeat"]
     bit_depth = params["bit_depth"]
+    pixel_observation = params['pixel_observation']
 
     if env in GYM_ENVS:
-        return GymEnv(env, seed, max_episode_length, action_repeat, bit_depth)
+        return GymEnv(env, seed, max_episode_length, action_repeat, bit_depth, pixel_observation)
 
     # if env in CONTROL_SUITE_ENVS:
     #     return ControlSuiteEnv(

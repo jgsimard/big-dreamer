@@ -354,22 +354,41 @@ class DenseModel(nn.Module):
 
     def __init__(
             self,
-            belief_size: int,
-            state_size: int,
+            input_size: int,
+            # belief_size: int,
+            # state_size: int,
             hidden_size: int,
+            output_size: int = 1,
             activation: str = "ELU",
             n_layers: int = 4,
             distribution: str = 'normal'
     ) -> None:
         super().__init__()
-        self.model = build_mlp(belief_size + state_size, hidden_size, 1, n_layers, activation)
+        self.model = build_mlp(input_size, hidden_size, output_size, n_layers, activation)
+        # self.model = build_mlp(belief_size + state_size, hidden_size, 1, n_layers, activation)
         self.distribution = distribution
 
-    def forward(self, belief: Tensor, state: Tensor) -> Tensor:
+    # def forward(self, belief: Tensor, state: Tensor) -> Tensor:
+    #     """
+    #     Forward pass.
+    #     """
+    #     x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
+    #     x = self.model(x)
+    #     return x
+    def forward(self, *args: Tuple[Tensor]) -> Tensor:
         """
         Forward pass.
         """
-        x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
+        if len(args) == 2:
+            # print("Twerk")
+            belief, state = args
+            # print("Twerk 2")
+            # print(belief.shape, state.shape)
+            x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
+            # print("Twerk 3")
+        else:
+            x, = args
+
         x = self.model(x)
         return x
 
@@ -723,86 +742,3 @@ def diag_normal(x: Tensor, min_std=0.1, max_std=2.0):
     mean, std = x.chunk(2, -1)
     std = max_std * torch.sigmoid(std) + min_std
     return D.independent.Independent(D.normal.Normal(mean, std), 1)
-
-
-# TODO Use Importance Weighted VAE to improve performance.
-class RSSM(nn.Module):
-    """
-    RSSM.
-    """
-
-    def __init__(
-        self,
-        embedding_size: int,
-        action_size: int,
-        deterministic_size: int,
-        stochastic_size: int,
-        hidden_size: int,
-        rnn_layers: int,
-    ):
-        super().__init__()
-        self.rnn = nn.GRU(
-            input_size=hidden_size,
-            hidden_size=deterministic_size,
-            num_layers=rnn_layers,
-        )
-
-        self.za_combination = LinearCombination(
-            stochastic_size, action_size, hidden_size
-        )
-
-        self.prior_h = nn.Linear(deterministic_size, hidden_size)
-        self.prior_out = nn.Linear(hidden_size, stochastic_size * 2)
-
-        self.he_combination = LinearCombination(
-            deterministic_size, embedding_size, hidden_size
-        )
-        self.posterior_parameters = nn.Linear(hidden_size, stochastic_size * 2)
-
-    def prior(self, h):
-        """
-        Prior.
-        """
-
-        return self.prior_out(activation_(self.prior_h(h)))
-
-    def forward(
-        self,
-        embedded: Tensor,  # (T, B, embedding_size)
-        action: Tensor,  # (T, B, action_size)
-        # reset: Tensor,  # (T, B)
-        z_in: Tensor,  # (T, B, stochastic_size)
-        h_in: Tensor,  # (T, B, deterministic_size)
-    ):
-        """
-        Forward pass.
-        """
-
-        priors = []
-        posts = []
-        states_h = []
-        samples = []
-        T = action.shape[0]
-        for _ in range(T):
-            za = activation_(self.za_combination(z_in, action))
-            h_out = self.rnn(za, h_in)
-            he = activation_(self.he_combination(h_out, embedded))
-            posterior_parameters = self.posterior_parameters(he)
-            posterior_distribution = diag_normal(posterior_parameters)
-            sample = posterior_distribution.rsample().reshape(action.shape[0], -1)
-
-            # record step
-            posts.append(posterior_parameters)
-            samples.append(sample)
-            states_h.append(h_out)
-
-            # update states for next step
-            h_in = h_out
-            z_in = sample
-
-        posts = torch.stack(posts)  # (T,B,2S)
-        states_h = torch.stack(states_h)  # (T,B,D)
-        samples = torch.stack(samples)  # (T,B,S)
-        priors = self.pri  # (T,B,2S)
-
-        return priors, posts, samples, states_h

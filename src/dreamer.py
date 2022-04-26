@@ -38,10 +38,9 @@ class Dreamer(Planet):
         self.planner = self.actor
 
         self.critic = DenseModel(
-            self.belief_size,
-            self.state_size,
+            self.belief_size + self.state_size,
             self.hidden_size,
-            self.dense_activation_function,
+            activation=self.dense_activation_function,
         ).to(device)
 
         if params['jit']:
@@ -71,10 +70,9 @@ class Dreamer(Planet):
 
         if self.use_discount:
             self.discount_model = DenseModel(
-                self.belief_size,
-                self.state_size,
+                self.belief_size + self.state_size,
                 self.hidden_size,
-                self.dense_activation_function,
+                activation=self.dense_activation_function,
             ).to(device)
 
         self._initialize_optimizers()
@@ -246,6 +244,7 @@ class Dreamer(Planet):
         ####################
         # DYNAMICS LEARNING
         ####################
+        # print("SALUT 1")
         # Draw sequences chunks
         obs, actions, rewards, nonterminals = self.buffer.sample(self.batch_size, self.seq_len)
 
@@ -255,7 +254,7 @@ class Dreamer(Planet):
 
         # compute image embeddings
         embeddings = self.encoder(obs[1:])
-
+        # print("SALUT 2")
         # Update belief/state using posterior from previous belief/state,
         # previous action and current observation (over entire sequence at once)
         beliefs, _, prior_params, posterior_states, posterior_params = self.transition_model(
@@ -267,12 +266,17 @@ class Dreamer(Planet):
         )
         # sum over final dims, average over batch and time
 
+        # print("SALUT 3")
         # compute losses
         observation_loss = self._observation_loss(beliefs, posterior_states, obs[1:])
+        # print("SALUT 3.1")
         reward_loss = self._reward_loss(beliefs, posterior_states, rewards[:-1])
+        # print("SALUT 3.2")
         kl_loss = self._kl_loss(posterior_params, prior_params)
+        # print("SALUT 3.3")
         model_loss = observation_loss + reward_loss + kl_loss * self.kl_loss_weight
 
+        # print("SALUT 4")
         if self.use_discount:
             discount_loss = self._discount_loss(beliefs, posterior_states, nonterminals[:-1])
             model_loss += discount_loss * self.discount_weight

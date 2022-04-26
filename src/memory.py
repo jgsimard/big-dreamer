@@ -9,10 +9,16 @@ class ExperienceReplay:
     Experience replay memory.
     """
 
-    def __init__(self, size, action_size, bit_depth, device):
+    def __init__(self, size, action_size, bit_depth, pixel_observation, observation_size, device):
         self.device = device
         self.size = size
-        self.observations = np.empty((size, 3, 64, 64), np.uint8)
+        self.pixel_observation = pixel_observation
+        if self.pixel_observation:
+            self.observations = np.empty((size, 3, 64, 64), dtype= np.uint8)
+        else:
+            print(f"observation_size={observation_size}")
+            self.observations = np.empty((size, observation_size),dtype=np.float32)
+
         self.actions = np.empty((size, action_size), dtype=np.float32)
         self.rewards = np.empty((size,), dtype=np.float32)
         self.nonterminals = np.empty((size, 1), dtype=np.float32)
@@ -28,10 +34,13 @@ class ExperienceReplay:
         """
         Append a new experience to the memory.
         """
-        # Decentre and discretise visual observations (to save memory)
-        self.observations[self.idx] = postprocess_observation(
-            observation.numpy(), self.bit_depth
-        )
+        if self.pixel_observation:
+            # Decentre and discretise visual observations (to save memory)
+            self.observations[self.idx] = postprocess_observation(
+                observation.numpy(), self.bit_depth
+            )
+        else:
+            self.observations[self.idx] = observation.numpy()
         self.actions[self.idx] = action.numpy()
         self.rewards[self.idx] = reward
         self.nonterminals[self.idx] = not done
@@ -49,9 +58,7 @@ class ExperienceReplay:
         valid_idx = False
         while not valid_idx:
             # print("HEREE")
-            # print('self.size', self.size)
-            # print('self.idx', self.idx)
-            # print('L', L)
+            # print(f'self.size={self.size}, self.idx={self.idx} L ={L}')
 
             idx = np.random.randint(0, self.size if self.full else self.idx - L)
             idxs = np.arange(idx, idx + L) % self.size
@@ -67,8 +74,9 @@ class ExperienceReplay:
 
         vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
         observations = torch.as_tensor(self.observations[vec_idxs].astype(np.float32))
-        # Undo discretisation for visual observations
-        preprocess_observation_(observations, self.bit_depth)
+        if self.pixel_observation:
+            # Undo discretisation for visual observations
+            preprocess_observation_(observations, self.bit_depth)
         return (
             observations.reshape(L, n, *observations.shape[1:]),
             self.actions[vec_idxs].reshape(L, n, -1),
@@ -80,6 +88,7 @@ class ExperienceReplay:
         """
         Sample a batch of n sequence chunks of length L uniformly from the memory.
         """
+        # print(self.size, n, L)
 
         batch = self._retrieve_batch(
             np.asarray([self._sample_idx(L) for _ in range(n)]), n, L

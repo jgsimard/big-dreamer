@@ -11,17 +11,45 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/jgsimard/.mujoco/mujoco200/bin
 #                    test_interval=2 \
 #                    log_video_freq=1
 
+ENV=Ant-v2 # [-1, 1]
+#ENV=HalfCheetah-v2 # [-1, 1]
+#ENV=Hopper-v2 # [-1, 1] # short
+#ENV=HumanoiDd-v2 # [-0.4, 0.4]
+#ENV=HumanoidStandup-v2 # [-0.4, 0.4]
+#ENV=InvertedDoublePendulum-v2 # [-1, 1] # short
+#ENV=InvertedPendulum-v2 # [-3, 3]
+#ENV=Reacher-v2 # [-1, 1]
+#ENV=Swimmer-v2 # [-1, 1]
+#ENV=Walker2d-v2 # [-1, 1] # short
+
+#python src/main.py disable_cuda=False \
+#                    algorithm='dreamer' \
+#                    env=${ENV} \
+#                    action_repeat=2 \
+#                    seed_steps=2000 \
+#                    episodes=100 \
+#                    collect_interval=2 \
+#                    hidden_size=32 \
+#                    belief_size=32 \
+#                    test_interval=2 \
+#                    log_video_freq=-1\
+#                    use_discount=False \
+#                    n_layers: 3
+
 python src/main.py disable_cuda=False \
                     algorithm='dreamer' \
-                    env='InvertedPendulum-v2' \
+                    env=${ENV} \
                     action_repeat=2 \
-                    episodes=10 \
+                    seed_steps=2000 \
+                    episodes=100 \
                     collect_interval=2 \
                     hidden_size=32 \
                     belief_size=32 \
                     test_interval=2 \
-                    log_video_freq=1\
-                    use_discount=True
+                    log_video_freq=-1\
+                    use_discount=False \
+                    n_layers=3 \
+                    pixel_observation=False
 
 #python src/main.py disable_cuda=False \
 #                    algorithm='dreamer' \

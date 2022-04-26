@@ -1,6 +1,6 @@
 import os
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 from collections import namedtuple
 
 
@@ -31,9 +31,10 @@ class Planet(BaseAgent):
     def __init__(self, params: Dict[str, Any], env):
         self.env = env
 
-        """
-        Initialize base parameters from the config file.
-        """
+        print(f'Environement min {self.env._env.action_space.low}')
+        print(f'Environement max {self.env._env.action_space.high}')
+
+        # Initialize base parameters from the config file.
 
         self.belief_size = params["belief_size"]
         self.state_size = params["state_size"]
@@ -48,6 +49,7 @@ class Planet(BaseAgent):
         self.seq_len = params["seq_len"]
 
         self.seed_episodes = params["seed_episodes"]
+        self.seed_steps = params["seed_steps"]
 
         self.experience_size = params["experience_size"]
         self.bit_depth = params["bit_depth"]
@@ -57,6 +59,8 @@ class Planet(BaseAgent):
         self.jit = params['jit']
 
         self.planning_horizon = params["planning_horizon"]
+
+        self.pixel_observation = params['pixel_observation']
 
         """
                 Initialize MPC parameters.
@@ -80,8 +84,10 @@ class Planet(BaseAgent):
 
         self.buffer = ExperienceReplay(
             self.experience_size,
-            env.action_size,
+            self.env.action_size,
             self.bit_depth,
+            self.pixel_observation,
+            self.env.observation_size,
             device,
         )
 
@@ -131,16 +137,20 @@ class Planet(BaseAgent):
         """
 
         total_steps = 0
-        for s in range(1, self.seed_episodes + 1):
+        s = 0
+        while total_steps < self.seed_steps:
+        # for s in range(1, self.seed_episodes + 1):
             done = False
             t = 0
             observation = self.env.reset()
+            print(f'observation.shape={observation.shape}')
             while not done:
                 action = self.env.sample_random_action()
                 next_observation, reward, done = self.env.step(action)
                 self.buffer.append(observation, action, reward, done)
                 observation = next_observation
                 t += 1
+            s += 1
 
             total_steps += t * self.action_repeat
         self.env.close()
@@ -159,12 +169,6 @@ class Planet(BaseAgent):
             self.dense_activation_function,
         ).to(device=device)
 
-        self.observation_model = ObservationModel(
-            self.belief_size,
-            self.state_size,
-            self.embedding_size,
-            self.cnn_activation_function,
-        ).to(device=device)
 
         # self.reward_model = RewardModel(
         #     self.belief_size,
@@ -174,16 +178,36 @@ class Planet(BaseAgent):
         # ).to(device=device)
 
         self.reward_model = DenseModel(
-            self.belief_size,
-            self.state_size,
+            self.belief_size + self.state_size,
             self.hidden_size,
-            self.dense_activation_function,
+            activation=self.dense_activation_function,
         ).to(device=device)
 
-        self.encoder = CnnImageEncoder(
+        if self.pixel_observation:
+            self.encoder = CnnImageEncoder(
+                    self.embedding_size,
+                    self.cnn_activation_function,
+                ).to(device=device)
+            self.observation_model = ObservationModel(
+                self.belief_size,
+                self.state_size,
                 self.embedding_size,
                 self.cnn_activation_function,
             ).to(device=device)
+        else:
+            # print(self.env.observation_size)
+            self.encoder = DenseModel(
+                self.env.observation_size,
+                self.hidden_size,
+                self.embedding_size,
+                self.dense_activation_function
+            )
+            self.observation_model = DenseModel(
+                self.belief_size + self.state_size,
+                self.hidden_size,
+                self.env.observation_size,
+                self.dense_activation_function
+            )
 
         self.planner = MPCPlanner(
             self.action_size,
@@ -229,13 +253,18 @@ class Planet(BaseAgent):
             self,
             beliefs: TensorType['seq_len', 'batch_size', 'belief_size'],
             posterior_states: TensorType['seq_len', 'batch_size', 'state_size'],
-            observations: TensorType['seq_len', 'batch_size', 'channels', 'height', 'width']
+            observations: Union[TensorType['seq_len', 'batch_size', 'channels', 'height', 'width'],
+                                TensorType['seq_len', 'batch_size', 'observation_size']]
     ) -> Tensor:
         """
         Compute the observation loss.
         """
         means = self.observation_model(beliefs, posterior_states)
-        observation_dist = Independent(Normal(means, 1), 3)  # independent for matching dims
+        # print(observations.shape, "TWWWWRWR")
+        if self.pixel_observation:
+            observation_dist = Independent(Normal(means, 1), 3)  # independent for matching dims
+        else:
+            observation_dist = Independent(Normal(means, 1), 1)
         observation_loss = -observation_dist.log_prob(observations).mean()
         return observation_loss
 
@@ -251,7 +280,6 @@ class Planet(BaseAgent):
         """
         means = self.reward_model(beliefs, posterior_states)
         reward_dist = Independent(Normal(means, 1), 1)
-        print(rewards.shape)
         reward_loss = -reward_dist.log_prob(rewards.unsqueeze(dim=-1)).mean()
         return reward_loss
 
