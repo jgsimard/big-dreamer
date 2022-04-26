@@ -74,6 +74,9 @@ class Dreamer(Planet):
                 self.hidden_size,
                 activation=self.dense_activation_function,
             ).to(device)
+        else:
+            # just to shut up pylint
+            self.discount_model = nn.Identity()
 
         self._initialize_optimizers()
 
