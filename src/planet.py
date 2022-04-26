@@ -37,6 +37,7 @@ class Planet(BaseAgent):
         # Initialize base parameters from the config file.
 
         self.belief_size = params["belief_size"]
+
         self.state_size = params["state_size"]
         self.action_size = env.action_size
         self.hidden_size = params["hidden_size"]
@@ -55,6 +56,10 @@ class Planet(BaseAgent):
         self.bit_depth = params["bit_depth"]
         self.kl_loss_weight = params['kl_loss_weight']
         self.latent_distribution = params['latent_distribution']
+        self.discrete_latent_dimensions = params['discrete_latent_dimensions']
+        self.discrete_latent_classes = params['discrete_latent_classes']
+        if self.latent_distribution == 'Categorical':
+            self.state_size = self.discrete_latent_dimensions * self.discrete_latent_classes
 
         self.jit = params['jit']
 
@@ -167,6 +172,9 @@ class Planet(BaseAgent):
             self.hidden_size,
             self.embedding_size,
             self.dense_activation_function,
+            latent_distribution=self.latent_distribution,
+            discrete_latent_dimensions=self.discrete_latent_dimensions,
+            discrete_latent_classes=self.discrete_latent_classes
         ).to(device=device)
 
 

@@ -264,6 +264,7 @@ class Dreamer(Planet):
             embeddings,
             nonterminals[:-1],
         )
+        # print(len(prior_params), len(posterior_params), "XXXXXXXX")
         # sum over final dims, average over batch and time
 
         # print("SALUT 3")

@@ -88,10 +88,11 @@ class CategoricalBeliefModel(nn.Module):
         super().__init__()
         self.discrete_latent_dimensions = discrete_latent_dimensions
         self.discrete_latent_classes = discrete_latent_classes
+        self.dim = discrete_latent_classes * discrete_latent_dimensions
         self.model = build_mlp(
             input_size,
             hidden_size,
-            discrete_latent_classes * discrete_latent_dimensions,
+            self.dim,
             1,
             activation
         )
@@ -105,12 +106,14 @@ class CategoricalBeliefModel(nn.Module):
             Tensor: belief of shape: (batch_size, belief_size)
         """
         logits = self.model(belief)
-        shape = (*logits.shape[:-1], self.discrete_latent_dimension, self.discrete_latent_classes)
+        batch_shape = logits.shape[:-1]
+        shape = (*batch_shape, self.discrete_latent_dimensions, self.discrete_latent_classes)
         logits = logits.reshape(shape)
         # use straight through gradient
         # https://arxiv.org/abs/1308.3432
         dist = D.OneHotCategoricalStraightThrough(logits=logits)
         state = dist.rsample()
+        state = state.view(*batch_shape, self.dim)
         return state, (logits,)
 
 
@@ -211,6 +214,7 @@ class TransitionModel(nn.Module):
 
         # Create lists for hidden states
         # (cannot use single tensor as buffer because autograd won't work with inplace writes)
+        # print("Twerk 1")
         T = actions.size(0) + 1
         beliefs = prefill(T)
         prior_states = prefill(T)
@@ -225,22 +229,29 @@ class TransitionModel(nn.Module):
             prior_logits = prefill(T)
             posterior_logits = prefill(T)
 
+        # print("Twerk 2")
         beliefs[0] = init_belief
         prior_states[0] = init_state
         posterior_states[0] = init_state
 
+        # print("Twerk 3")
         # Loop over time sequence
         for t in range(T - 1):
             # Select appropriate previous state
             _state = prior_states[t] if embeddings is None else posterior_states[t]
 
+            # print("Twerk 4")
+            # print(f'_state.shape={_state.shape}')
+            # print(f'nonterminals[t].shape={nonterminals[t].shape}')
             # Mask if previous transition was terminal
             _state = _state if nonterminals is None else _state * nonterminals[t]
 
+            # print("Twerk 5")
             # Compute belief (deterministic hidden state)
             hidden = self.fc_embed_state_action(cat(_state, actions[t]))
             beliefs[t + 1] = self.rnn(hidden, beliefs[t])
 
+            # print("Twerk 6")
             # Compute state prior by applying transition dynamics
             prior_states[t + 1], prior_params_ = self.belief_prior(beliefs[t + 1])
             if self.latent_distribution == "Gaussian":
@@ -259,6 +270,9 @@ class TransitionModel(nn.Module):
                 elif self.latent_distribution == "Categorical":
                     posterior_logits[t + 1] = post_params_
 
+        # print("Twerk 7")
+        # print(len(beliefs), [b.shape for b in beliefs])
+        # print(len(prior_states), [b.shape for b in prior_states])
         # Return new hidden states
         beliefs = stack(beliefs)
         prior_states = stack(prior_states)
@@ -269,6 +283,7 @@ class TransitionModel(nn.Module):
         elif self.latent_distribution == "Categorical":
             prior_params = (stack(prior_logits),)
 
+        # print("Twerk 8")
         # add posterior computations if observations were present
         if embeddings is not None:
             posterior_states = stack(posterior_states)
