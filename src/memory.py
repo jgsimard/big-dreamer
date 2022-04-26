@@ -16,7 +16,7 @@ class ExperienceReplay:
         if self.pixel_observation:
             self.observations = np.empty((size, 3, 64, 64), dtype= np.uint8)
         else:
-            print(f"observation_size={observation_size}")
+            # print(f"observation_size={observation_size}")
             self.observations = np.empty((size, observation_size),dtype=np.float32)
 
         self.actions = np.empty((size, action_size), dtype=np.float32)

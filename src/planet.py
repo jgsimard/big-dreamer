@@ -76,6 +76,7 @@ class Planet(BaseAgent):
 
         self.model_learning_rate = params["model_learning_rate"]
         self.adam_epsilon = params["adam_epsilon"]
+        self.weight_decay = params['weight_decay']
         self.action_noise = params["action_noise"]
         self.grad_clip_norm = params["grad_clip_norm"]
         self.action_repeat = params["action_repeat"]
@@ -109,6 +110,7 @@ class Planet(BaseAgent):
         Load models if they exist.
         """
         if params["models"] != "" and os.path.exists(params["models"]):
+            print("Loading models...")
             model_dicts = torch.load(params["models"])
             self.transition_model.load_state_dict(model_dicts["transition_model"])
             self.observation_model.load_state_dict(model_dicts["observation_model"])
@@ -148,7 +150,7 @@ class Planet(BaseAgent):
             done = False
             t = 0
             observation = self.env.reset()
-            print(f'observation.shape={observation.shape}')
+            # print(f'observation.shape={observation.shape}')
             while not done:
                 action = self.env.sample_random_action()
                 next_observation, reward, done = self.env.step(action)
@@ -177,14 +179,6 @@ class Planet(BaseAgent):
             discrete_latent_classes=self.discrete_latent_classes
         ).to(device=device)
 
-
-        # self.reward_model = RewardModel(
-        #     self.belief_size,
-        #     self.state_size,
-        #     self.hidden_size,
-        #     self.dense_activation_function,
-        # ).to(device=device)
-
         self.reward_model = DenseModel(
             self.belief_size + self.state_size,
             self.hidden_size,
@@ -203,7 +197,6 @@ class Planet(BaseAgent):
                 self.cnn_activation_function,
             ).to(device=device)
         else:
-            # print(self.env.observation_size)
             self.encoder = DenseModel(
                 self.env.observation_size,
                 self.hidden_size,
@@ -252,8 +245,12 @@ class Planet(BaseAgent):
             + list(self.reward_model.parameters())
             + list(self.encoder.parameters())
         )
+
         self.model_optimizer = optim.Adam(
-            self.model_params, lr=self.model_learning_rate, eps=self.adam_epsilon
+            self.model_params,
+            lr=self.model_learning_rate,
+            eps=self.adam_epsilon,
+            weight_decay=self.weight_decay
         )
 
     @typechecked
@@ -381,14 +378,14 @@ class Planet(BaseAgent):
         """
         Update belief and action given an observation.
         """
-
+        embedding = self.encoder(observation).unsqueeze(dim=0)
         # Infer belief over current state q(s_t|o≤t,a<t) from the history
         # Action and observation need extra time dimension
         belief, _, _, posterior_state, _ = self.transition_model(
             posterior_state,
             action.unsqueeze(dim=0),
             belief,
-            self.encoder(observation).unsqueeze(dim=0),
+            embedding,
         )
         # Remove time dimension from belief/state
         belief = belief.squeeze(dim=0)

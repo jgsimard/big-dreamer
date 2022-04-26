@@ -83,141 +83,166 @@ def my_app(cfg: DictConfig) -> None:
     env_steps, num_episodes = model.randomly_initialize_replay_buffer()
     print(f"Initialized with {num_episodes} episodes and {env_steps} steps")
 
+    logs ={}
+    observation = env.reset()
+    past_time = time.time()
+    # done = False
+    episode_reward = 0
+    last_episode_reward = 0
+    episode_steps = 0
+    belief = torch.zeros(1, params["belief_size"], device=device)
+    posterior_state = torch.zeros(1, params["state_size"], device=device)
+    action = torch.zeros(1, env.action_size, device=device)
     ###################
-    # RUN TRAINING
+    # TRAINING LOOP
     ###################
-    train_step = 0
+    for step in range(env_steps, params['train_steps']):
+        ###################
+        # Weight updates
+        ###################
+        if step % params['environment_steps_per_update'] == 0:
+            weight_update_start_time = time.time()
+            for _ in range(params['collect_interval']):
+                logs = model.train_step()
+                elapsed_time = time.time() - weight_update_start_time
+                logs["weight_update_per_sec"] = params['collect_interval'] / elapsed_time
 
-    # Training
-    for episode in tqdm(
-            range(num_episodes + 1, num_episodes + params["episodes"] + 1),
-            total=num_episodes + params["episodes"],
-            initial=num_episodes + 1,
-    ):
-    # for episode in tqdm(
-    #     range(num_episodes + 1, params["episodes"] + 1),
-    #     total=params["episodes"],
-    #     initial=num_episodes + 1,
-    # ):
-        # Model fitting
-        print("training loop")
-        for _ in tqdm(range(params["collect_interval"])):
-            logs = model.train_step()
-
-            # Not sure we really want this?
-            # if train_step % params['log_freq'] == 0:
-            #     # perform the logging
-            #     for key, value in logs.items():
-            #         print('{} : {}'.format('Train_'+key, value))
-            #         logger.log_scalar(value, 'Train_'+key, train_step)
-
-            #     logger.flush()
-
-            train_step += 1
+        if params["algorithm"] in ['dreamer', 'dreamerV2']:
+            if step % params['ActorCritic']['slow_critic_update_interval']:
+                model.update_critic()
 
         ##########################
         # Environment interaction
         ##########################
-        print("Data collection")
+        # print("Data collection")
         with torch.no_grad():
-            observation = env.reset()
-            total_reward = 0
-            belief = torch.zeros(1, params["belief_size"], device=device)
-            posterior_state = torch.zeros(1, params["state_size"], device=device)
-            action = torch.zeros(1, env.action_size, device=device)
+            # observation = env.reset()
+            # total_reward = 0
+            # belief = torch.zeros(1, params["belief_size"], device=device)
+            # posterior_state = torch.zeros(1, params["state_size"], device=device)
+            # action = torch.zeros(1, env.action_size, device=device)
 
-            pbar = tqdm(range(params["max_episode_length"] // params["action_repeat"]))
-            t = 0
+            # pbar = tqdm(range(params["max_episode_length"] // params["action_repeat"]))
+            # t = 0
 
-            for t in pbar:
-                (
-                    belief,
-                    posterior_state,
-                    action,
-                    next_observation,
-                    reward,
-                    done,
-                ) = model.update_belief_and_act(
-                    env,
-                    belief,
-                    posterior_state,
-                    action,
-                    observation.to(device=device),
-                    explore=True,
-                )
+            # for t in pbar:
+            (
+                belief,
+                posterior_state,
+                action,
+                next_observation,
+                reward,
+                done,
+            ) = model.update_belief_and_act(
+                env,
+                belief,
+                posterior_state,
+                action,
+                observation.to(device=device),
+                explore=True,
+            )
 
-                # store the new stuff
-                model.buffer.append(observation, action, reward, done)
+            # store the new stuff
+            model.buffer.append(observation, action, reward, done)
 
-                total_reward += reward
-                observation = next_observation
+            episode_reward += reward
+            episode_steps += 1
+            observation = next_observation
 
-                if params["render"]:
-                    env.render()
-                if done:
-                    pbar.close()
-                    env.close()
-                    break
+            # print(episode_reward)
 
-            env_steps += t * params["action_repeat"]
-            num_episodes += 1
-            logs["episodique_total_reward"] = total_reward
+            if params["render"]:
+                env.render()
+            if done or episode_steps % params["max_episode_length"] == 0:
+                # pbar.close()
+                # env.close()
+                # break
+                observation = env.reset()
+                # done = False
+                last_episode_reward = episode_reward
+                episode_reward = 0
+                episode_steps = 0
+                # todo use inplace stuff instead
+                belief = torch.zeros(1, params["belief_size"], device=device)
+                posterior_state = torch.zeros(1, params["state_size"], device=device)
+                action = torch.zeros(1, env.action_size, device=device)
+
+                num_episodes += 1
+            # env_steps += t * params["action_repeat"]
+            # num_episodes += 1
+            logs["episode_total_reward"] = last_episode_reward
+
+        ##########################
+        # Logging
+        ##########################
+        if step % params["log_freq"] == 0:
+            current_time = time.time()
+            elapsed_time = current_time - past_time
+            logs["env_update_per_sec"] = params['log_freq'] / elapsed_time
+            past_time = current_time
+            print("\nPerform Logging")
+            for key, value in logs.items():
+                print(f"{key} : {value}")
+                logger.log_scalar(value, key, step)
+            print("Done logging...")
+
+            logger.flush()
 
         ##########################
         # Test model
         ##########################
-        if episode % params["test_interval"] == 0:
-            print("Test model")
+        if step % params["test_interval"] == 0:
+            print("\nTest model")
             model.eval()
 
             # Initialise parallelised test environments
             test_envs = EnvBatcher(Env, params, params["test_episodes"])
 
             with torch.no_grad():
-                observation = test_envs.reset()
-                total_rewards = np.zeros((params["test_episodes"],))
-                video_frames = []
+                observation_test = test_envs.reset()
+                total_rewards_test = np.zeros((params["test_episodes"],))
+                video_frames_test = []
 
-                belief = torch.zeros(
+                belief_test = torch.zeros(
                     params["test_episodes"], params["belief_size"], device=device
                 )
-                posterior_state = torch.zeros(
+                posterior_state_test = torch.zeros(
                     params["test_episodes"], params["state_size"], device=device
                 )
-                action = torch.zeros(
+                action_test = torch.zeros(
                     params["test_episodes"], env.action_size, device=device
                 )
 
                 pbar_test = tqdm(
                     range(params["max_episode_length"] // params["action_repeat"])
                 )
-                for t in pbar_test:
+                for _ in pbar_test:
                     (
-                        belief,
-                        posterior_state,
-                        action,
-                        next_observation,
-                        reward,
-                        done,
+                        belief_test,
+                        posterior_state_test,
+                        action_test,
+                        next_observation_test,
+                        reward_test,
+                        done_test,
                     ) = model.update_belief_and_act(
                         test_envs,
-                        belief,
-                        posterior_state,
-                        action,
-                        observation.to(device=device),
+                        belief_test,
+                        posterior_state_test,
+                        action_test,
+                        observation_test.to(device=device),
                     )
 
-                    total_rewards += reward.numpy()
+                    total_rewards_test += reward_test.numpy()
 
                     if params['pixel_observation']:
                         # Collect real vs. predicted frames for video
-                        video_frames.append(
+                        video_frames_test.append(
                             make_grid(
                                 torch.cat(
                                     [
                                         observation,
                                         model.observation_model(
-                                            belief, posterior_state
+                                            belief_test, posterior_state_test
                                         ).cpu(),
                                     ],
                                     dim=3,
@@ -226,40 +251,36 @@ def my_app(cfg: DictConfig) -> None:
                                 nrow=5,
                             ).numpy()
                         )  # Decentre
-                    observation = next_observation
+                    observation_test = next_observation_test
 
                     pbar_test.set_description("Testing...")
-                    if done.sum().item() == params["test_episodes"]:
+                    if done_test.sum().item() == params["test_episodes"]:
                         pbar_test.close()
                         test_envs.close()
                         break
-
-                logs["Eval_avg_return"] = total_rewards.mean()
-                logs["Eval_std_return"] = total_rewards.std()
-
+                # log test scalar
+                test_logs = {
+                    "Eval_min_return": total_rewards_test.min().item(),
+                    "Eval_avg_return": total_rewards_test.mean().item(),
+                    "Eval_max_return": total_rewards_test.max().item(),
+                    "Eval_std_return": total_rewards_test.std().item(),
+                }
+                for key, value in test_logs.items():
+                    print(f"{key} : {value}")
+                    logger.log_scalar(value, key, step)
+                model.eval()
             test_envs.close()
 
             # TODO : Save Model
-            if episode % params["log_video_freq"] == 0 \
+            if step % params["log_video_freq"] == 0 \
                     and params["log_video_freq"] != -1 \
                     and params['pixel_observation']:
                 # log eval videos
                 logger.log_video(
-                    np.expand_dims(np.stack(video_frames), axis=0),
+                    np.expand_dims(np.stack(video_frames_test), axis=0),
                     name="Eval_rollout",
-                    step=episode,
+                    step=step,
                 )
-
-        if episode % params["log_freq"] == 0:
-            print("Perform Logging")
-            # perform the logging
-            for key, value in logs.items():
-                print(f"{key} : {value}")
-                logger.log_scalar(value, key, episode)
-            print("Done logging...\n")
-
-            logger.flush()
-
     # Close training environment
     env.close()
 

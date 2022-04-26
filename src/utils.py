@@ -53,6 +53,30 @@ def prefill(t: int) -> List[Tensor]:
     return [torch.empty(0)] * t
 
 
+def polyak(target_param: Tensor, param: Tensor, weight: float):
+    """
+    Polyak averaging for ONE parameter (soft update)
+
+    :param target_param:
+    :param param:
+    :param weight:
+    :return:
+    """
+    target_param.data.copy_(param.data * weight + target_param.data * (1.0 - weight))
+
+
+def polyak_update(target: nn.Module, base: nn.Module, weight: float):
+    """
+    Perform polyack averaging (soft update) for a nn.Module
+
+    :param target:
+    :param base:
+    :param weight:
+    :return:
+    """
+    for target_param, param in zip(target.parameters(), base.parameters()):
+        polyak(target_param, param, weight)
+
 # Plots min, max and mean + standard deviation bars of a population over time
 def lineplot(xs, ys_population, title, path="", xaxis="episode"):
     """

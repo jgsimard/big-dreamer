@@ -1,9 +1,9 @@
 from typing import Tuple, Dict, Any
+import copy
 
 import torch
 from torch import optim, nn, Tensor
 from torch.distributions import Normal, kl_divergence, OneHotCategoricalStraightThrough
-
 import torch.distributions as D
 from torch.distributions.transformed_distribution import TransformedDistribution
 
@@ -12,7 +12,7 @@ from typeguard import typechecked
 
 from models import ActorModel, TanhBijector, SampleDist, DenseModel
 from planet import Planet
-from utils import FreezeParameters, device, cat, prefill, stack
+from utils import FreezeParameters, device, cat, prefill, stack, polyak_update
 
 
 patch_typeguard()
@@ -35,13 +35,19 @@ class Dreamer(Planet):
             self.dense_activation_function,
             params['action_distribution']
         ).to(device)
-        self.planner = self.actor
 
         self.critic = DenseModel(
             self.belief_size + self.state_size,
             self.hidden_size,
             activation=self.dense_activation_function,
         ).to(device)
+
+        self.critic_target = DenseModel(
+            self.belief_size + self.state_size,
+            self.hidden_size,
+            activation=self.dense_activation_function,
+        ).to(device)
+        self.critic_target = copy.deepcopy(self.critic)
 
         if params['jit']:
             self.actor = torch.jit.script(self.actor)
@@ -51,15 +57,18 @@ class Dreamer(Planet):
             self.actor.parameters(),
             lr=params['ActorCritic']["actor_learning_rate"],
             eps=params["adam_epsilon"],
+            weight_decay=params['weight_decay']
         )
         self.value_optimizer = optim.Adam(
             self.critic.parameters(),
             lr=params['ActorCritic']["value_learning_rate"],
             eps=params["adam_epsilon"],
+            weight_decay=params['weight_decay']
         )
 
         self.entropy_weight = params['ActorCritic']["entropy_weight"]
-        self.actor_gradient = params['ActorCritic']["actor_gradient"]
+        self.gradient_mixing = params['ActorCritic']["gradient_mixing"]
+        self.polyak_avg = params['ActorCritic']["polyak_avg"]
         self.discount = params["discount"]
         self.disclam = params["disclam"]
 
@@ -110,7 +119,7 @@ class Dreamer(Planet):
         prior_dist = self._get_dist(prior_params)
         posterior_dist = self._get_dist(posterior_params)
 
-        if self.kl_balance == -1 :
+        if self.kl_balance == -1:
             div = kl_divergence(posterior_dist, prior_dist).sum(dim=2)
 
             # this is the free bits optimization presented in
@@ -122,14 +131,14 @@ class Dreamer(Planet):
             prior_dist_detach = self._get_dist(prior_params, detach=True)
             posterior_dist_detach = self._get_dist(posterior_params, detach=True)
 
-            kl_lhs = kl_divergence(posterior_dist_detach, prior_dist).sum(dim=2)
-            kl_rhs = kl_divergence(posterior_dist, prior_dist_detach).sum(dim=2)
+            kl_lhs = kl_divergence(posterior_dist_detach, prior_dist).mean()
+            kl_rhs = kl_divergence(posterior_dist, prior_dist_detach).mean()
 
             # this is the free bits optimization presented in
             # Improved Variational Inference with Inverse Autoregressive Flow : C.8.
             # https://arxiv.org/abs/1606.04934
-            kl_lhs = torch.max(kl_lhs, self.free_nats).mean(dim=(0, 1))
-            kl_rhs = torch.max(kl_rhs, self.free_nats).mean(dim=(0, 1))
+            kl_lhs = torch.max(kl_lhs, self.free_nats)
+            kl_rhs = torch.max(kl_rhs, self.free_nats)
 
             # balance
             kl_loss = self.kl_balance * kl_lhs + (1 - self.kl_balance) * kl_rhs
@@ -160,7 +169,10 @@ class Dreamer(Planet):
             self.model_params += list(self.discount_model.parameters())
 
         self.model_optimizer = optim.Adam(
-            self.model_params, lr=self.model_learning_rate, eps=self.adam_epsilon
+            self.model_params,
+            lr=self.model_learning_rate,
+            eps=self.adam_epsilon,
+            weight_decay=self.weight_decay
         )
 
     @typechecked
@@ -258,8 +270,6 @@ class Dreamer(Planet):
         # compute image embeddings
         embeddings = self.encoder(obs[1:])
         # print("SALUT 2")
-        # Update belief/state using posterior from previous belief/state,
-        # previous action and current observation (over entire sequence at once)
         beliefs, _, prior_params, posterior_states, posterior_params = self.transition_model(
             init_state,
             actions[:-1],
@@ -314,9 +324,9 @@ class Dreamer(Planet):
             )
 
         # Predict Rewards & Values
-        with FreezeParameters(self.model_modules + [self.critic]):
+        with FreezeParameters(self.model_modules + [self.critic] + [self.critic_target]):
             imged_reward = self.reward_model(imged_belief, imged_prior_state)
-            value_pred = self.critic(imged_belief, imged_prior_state)
+            value_pred = self.critic_target(imged_belief, imged_prior_state)
             if self.use_discount:
                 discount_logits = self.discount_model(imged_belief, imged_prior_state)
                 discount_dist = D.Independent(D.Bernoulli(logits=discount_logits), 1)
@@ -330,17 +340,16 @@ class Dreamer(Planet):
             discount=self.discount,
             lambda_=self.disclam,
         )
-        if self.actor_gradient == 'reinforce':
-            raise NotImplementedError('reinforce actor gradiant is not yet implemented')
-        if self.actor_gradient == 'dynamics':
+        if self.gradient_mixing == -1:
             objective = returns
         else:
-            raise NotImplementedError(f"{self.actor_gradient} not implemented as actor gradient")
+            raise NotImplementedError("gradient_mixing not yet implemented ")
 
         # Update Actor weights
 
         policy_entropy = action_entropy.unsqueeze(-1)
         if self.entropy_weight != -1:
+            # print(objective.shape, policy_entropy.shape)
             objective = objective + self.entropy_weight * policy_entropy
         if self.use_discount:
             # discount_arr = torch.cat([torch.ones_like(discount_arr[:, :1]),
@@ -348,7 +357,8 @@ class Dreamer(Planet):
             discount_arr[:, 0, 0] = 1.0  # at least the first one of each trajectory =1
             discount = torch.cumprod(discount_arr, 0)
             objective = discount * objective
-        actor_loss = -torch.mean(objective)
+        actor_loss = -objective.mean()
+        # actor_loss = - objective.mean(dim=1).sum()
 
 
         # actor_loss = -torch.mean(returns)
@@ -372,13 +382,11 @@ class Dreamer(Planet):
                 value_discount = discount.detach()
 
         value_dist = Normal(self.critic(value_beliefs, value_prior_states), 1)
-        # value_dist = Normal(
-        #     bottle(self.critic, (value_beliefs, value_prior_states)), 1
-        # )
+
         if self.use_discount:
             value_loss = -(value_discount * value_dist.log_prob(target_return)).mean()
         else:
-            value_loss = -value_dist.log_prob(target_return).mean(dim=(0, 1))
+            value_loss = -value_dist.log_prob(target_return).mean()
         logs["value_loss"] = value_loss.item()
 
         # Update model parameters
@@ -391,25 +399,56 @@ class Dreamer(Planet):
 
         return logs
 
+    def eval(self) -> None:
+        """
+        Set the models to evaluation mode.
+        """
+
+        self.transition_model.eval()
+        self.observation_model.eval()
+        self.reward_model.eval()
+        self.encoder.eval()
+        self.actor.eval()
+        self.critic.eval()
+        if self.use_discount:
+            self.discount_model.eval()
+
+    def train(self) -> None:
+        """
+        Set the models to training mode.
+        """
+
+        self.transition_model.train()
+        self.observation_model.train()
+        self.reward_model.train()
+        self.encoder.train()
+        self.actor.train()
+        self.critic.train()
+        if self.use_discount:
+            self.discount_model.train()
+
+    def update_critic(self) -> None:
+        """
+        Update the critic weights using polyack averaging (soft update : see DDPG)
+        """
+        polyak_update(self.critic_target, self.critic, self.polyak_avg)
+
     def get_action(self, belief: Tensor, state: Tensor, deterministic: bool = False) -> Tensor:
         """
         Get action.
         """
 
-        action_mean, action_std = self.planner(belief, state)
+        action_mean, action_std = self.actor(belief, state)
         dist = D.Normal(action_mean, action_std)
-        dist = TransformedDistribution(dist, TanhBijector()) # clip [-1,1]
+        dist = TransformedDistribution(dist, TanhBijector())  # clip [-1,1]
         dist = D.Independent(dist, 1)
         dist = SampleDist(dist)
 
         if deterministic:
-            sample =  dist.mode()
+            sample = dist.mode()
         else:
             sample = dist.rsample()
-        # print(dist, sample.shape, dist.entropy().shape)
         return sample, dist.entropy()
-        #
-        # return dist.rsample()
 
 
 def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.95):
