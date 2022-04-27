@@ -15,6 +15,7 @@ python -m pylint src
 
 #### Models
 Once every dependencies are installed (following the steps of the next section), you can run the following command to train the a model:
+
 ```
 python src/main.py disable_cuda=True \
                     algorithm="dreamer" \
@@ -28,6 +29,10 @@ python src/main.py disable_cuda=True \
                     log_video_freq=10
 ```
 
+Notes:
+Use `algorithm="dreamer"` to run the Dreamer algorithm.
+Use `algorithm="planet"` to run the Planet algorithm.
+Use `algorithm="dreamerV2"` to run the DreamerV2 algorithm (not complete yet).
 
 ## Installation Procedures from Homeworks
 
