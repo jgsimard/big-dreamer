@@ -13,6 +13,21 @@ python -m unittest
 #### Code Quality
 python -m pylint src
 
+#### Models
+Once every dependencies are installed (following the steps of the next section), you can run the following command to train the a model:
+```
+python src/main.py disable_cuda=True \
+                    algorithm="dreamer" \
+                    env="Pendulum-v0" \
+                    action_repeat=2 \
+                    episodes=100 \
+                    collect_interval=50 \
+                    hidden_size=32 \
+                    belief_size=32 \
+                    test_interval=10 \
+                    log_video_freq=10
+```
+
 
 ## Installation Procedures from Homeworks
 
@@ -36,7 +51,6 @@ export LD_LIBRARY_PATH=~/.mujoco/mujoco200/bin/
 
 ### Install other dependencies
 
-
 There are two options:
 
 A. (Recommended) Install with conda:
@@ -55,7 +69,7 @@ A. (Recommended) Install with conda:
 
 	3. activate the environment (do this every time you open a new terminal and want to run code):
 	```
-	source activate roble
+	source activate big-dreamer
 	```
 
 	4. Install the requirements into this conda environment
@@ -63,7 +77,7 @@ A. (Recommended) Install with conda:
 	pip install --user -r requirements.txt
 	```
 
-	5. Allow your code to be able to see 'ift6163'
+	5. Allow your code to be able to see 'src'
 	```
 	cd <path_to_hw1>
 	$ pip install -e .

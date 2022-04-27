@@ -284,7 +284,6 @@ def my_app(cfg: DictConfig) -> None:
     # Close training environment
     env.close()
 
-
 if __name__ == "__main__":
     import os
 

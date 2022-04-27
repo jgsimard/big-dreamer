@@ -3,11 +3,9 @@ import os
 from typing import Any, Dict, List, Tuple, Union
 from collections import namedtuple
 
-
 import torch
 from torch import Tensor, optim, nn
 from torch.distributions import Normal, kl_divergence, Independent
-# from torch.nn import functional as F
 
 from torchtyping import TensorType, patch_typeguard
 from typeguard import typechecked
@@ -31,11 +29,7 @@ class Planet(BaseAgent):
     def __init__(self, params: Dict[str, Any], env):
         self.env = env
 
-        print(f'Environement min {self.env._env.action_space.low}')
-        print(f'Environement max {self.env._env.action_space.high}')
-
         # Initialize base parameters from the config file.
-
         self.belief_size = params["belief_size"]
 
         self.state_size = params["state_size"]
@@ -58,6 +52,7 @@ class Planet(BaseAgent):
         self.latent_distribution = params['latent_distribution']
         self.discrete_latent_dimensions = params['discrete_latent_dimensions']
         self.discrete_latent_classes = params['discrete_latent_classes']
+
         if self.latent_distribution == 'Categorical':
             self.state_size = self.discrete_latent_dimensions * self.discrete_latent_classes
 

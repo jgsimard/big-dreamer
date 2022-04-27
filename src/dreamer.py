@@ -259,7 +259,6 @@ class Dreamer(Planet):
         ####################
         # DYNAMICS LEARNING
         ####################
-        # print("SALUT 1")
         # Draw sequences chunks
         obs, actions, rewards, nonterminals = self.buffer.sample(self.batch_size, self.seq_len)
 
@@ -269,7 +268,7 @@ class Dreamer(Planet):
 
         # compute image embeddings
         embeddings = self.encoder(obs[1:])
-        # print("SALUT 2")
+
         beliefs, _, prior_params, posterior_states, posterior_params = self.transition_model(
             init_state,
             actions[:-1],
@@ -277,20 +276,14 @@ class Dreamer(Planet):
             embeddings,
             nonterminals[:-1],
         )
-        # print(len(prior_params), len(posterior_params), "XXXXXXXX")
         # sum over final dims, average over batch and time
 
-        # print("SALUT 3")
         # compute losses
         observation_loss = self._observation_loss(beliefs, posterior_states, obs[1:])
-        # print("SALUT 3.1")
         reward_loss = self._reward_loss(beliefs, posterior_states, rewards[:-1])
-        # print("SALUT 3.2")
         kl_loss = self._kl_loss(posterior_params, prior_params)
-        # print("SALUT 3.3")
         model_loss = observation_loss + reward_loss + kl_loss * self.kl_loss_weight
 
-        # print("SALUT 4")
         if self.use_discount:
             discount_loss = self._discount_loss(beliefs, posterior_states, nonterminals[:-1])
             model_loss += discount_loss * self.discount_weight
@@ -346,8 +339,8 @@ class Dreamer(Planet):
             raise NotImplementedError("gradient_mixing not yet implemented ")
 
         # Update Actor weights
-
         policy_entropy = action_entropy.unsqueeze(-1)
+
         if self.entropy_weight != -1:
             # print(objective.shape, policy_entropy.shape)
             objective = objective + self.entropy_weight * policy_entropy
@@ -465,11 +458,14 @@ def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.
     last = bootstrap
     indices = reversed(range(len(inputs)))
     outputs = []
+
     for index in indices:
         inp, disc = inputs[index], discount_tensor[index]
         last = inp + disc * lambda_ * last
         outputs.append(last)
+
     outputs = list(reversed(outputs))
     outputs = torch.stack(outputs, 0)
     returns = outputs
+
     return returns
