@@ -1,10 +1,9 @@
 ### References
-
-Based on initial code from:
+This work is based out of an implementation of Planet from: https://github.com/Kaixhin/PlaNet
 
 
 ### Running Some of the Stuff
-#### Install Pre-commit
+#### Install Pre-commit configs
 python -m pre_commit install
 
 #### Tests
@@ -13,7 +12,7 @@ python -m unittest
 #### Code Quality
 python -m pylint src
 
-#### Models
+#### How to run Models
 Once every dependencies are installed (following the steps of the next section), you can run the following command to train the a model:
 
 ```
