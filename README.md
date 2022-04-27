@@ -33,6 +33,14 @@ Use `algorithm="dreamer"` to run the Dreamer algorithm.
 Use `algorithm="planet"` to run the Planet algorithm.
 Use `algorithm="dreamerV2"` to run the DreamerV2 algorithm (not complete yet).
 
+## Data experiment links
+Our event files from our experiments were large, and therefore could not be uploaded to gradescope with our code. Feel free to download the following links below:
+
+Pendulum-V0 with Planet: https://drive.google.com/file/d/1p27FyXWIBRFniYQ58StAevUmRL7ujxSL/view?usp=sharing
+HumanoidStandup-V2 with Dreamer:
+Pendulum-V0 with Planet:
+HumanoidStandup-V2 with Dreamer:
+
 ## Installation Procedures from Homeworks
 
 ### Install mujoco:
