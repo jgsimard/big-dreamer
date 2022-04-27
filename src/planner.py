@@ -1,19 +1,11 @@
 import torch
-from torch import jit
+from torch import nn
 
 
-class MPCPlanner(jit.ScriptModule):
+class MPCPlanner(nn.Module):
     """
     Model-predictive control planner with cross-entropy method and learned transition model.
     """
-
-    __constants__ = [
-        "action_size",
-        "planning_horizon",
-        "optimisation_iters",
-        "candidates",
-        "top_candidates",
-    ]
 
     def __init__(
         self,
@@ -26,13 +18,13 @@ class MPCPlanner(jit.ScriptModule):
         reward_model,
     ):
         super().__init__()
-        self.transition_model, self.reward_model = transition_model, reward_model
+        self.transition_model = transition_model
+        self.reward_model = reward_model
         self.action_size = action_size
         self.planning_horizon = planning_horizon
         self.optimisation_iters = optimisation_iters
         self.candidates, self.top_candidates = candidates, top_candidates
 
-    @jit.script_method
     def forward(self, belief, state):
         """
         Plan actions for the given belief and state.
@@ -70,7 +62,7 @@ class MPCPlanner(jit.ScriptModule):
             )
             # Sample next states
             # [12, 1000, 200] [12, 1000, 30] : 12 horizon steps; 1000 candidates
-            beliefs, states, _, _ = self.transition_model(state, actions, belief)
+            beliefs, states, _, _, _ = self.transition_model(state, actions, belief)
             # Calculate expected returns (technically sum of rewards over planning horizon)
             # output from r-model[12000]->view[12, 1000]->sum[1000]
             returns = (

@@ -1,25 +1,25 @@
 import os
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple, Union
+from collections import namedtuple
 
 import torch
 from torch import Tensor, optim, nn
-from torch.distributions import Normal, kl_divergence
-from torch.nn import functional as F
+from torch.distributions import Normal, kl_divergence, Independent
+
+from torchtyping import TensorType, patch_typeguard
+from typeguard import typechecked
 
 from env import EnvBatcher
 from memory import ExperienceReplay
-from models import (
-    TransitionModel,
-    ObservationModel,
-    RewardModel,
-    CnnImageEncoder,
-    bottle,
-)
+from models import TransitionModel, ObservationModel, DenseModel, CnnImageEncoder
 from utils import device
 from planner import MPCPlanner
 from base_agent import BaseAgent
 
+patch_typeguard()
+
+DiscreteState = namedtuple('DiscreteState', [])
 
 class Planet(BaseAgent):
     """
@@ -29,45 +29,49 @@ class Planet(BaseAgent):
     def __init__(self, params: Dict[str, Any], env):
         self.env = env
 
-        """
-        Initialize base parameters from the config file.
-        """
-
+        # Initialize base parameters from the config file.
         self.belief_size = params["belief_size"]
+
         self.state_size = params["state_size"]
         self.action_size = env.action_size
         self.hidden_size = params["hidden_size"]
         self.embedding_size = params["embedding_size"]
-        self.dense_activation_function = params["dense_activation_function"]
 
-        self.observation_size = env.observation_size
-        self.embedding_size = params["embedding_size"]
+        self.dense_activation_function = params["dense_activation_function"]
         self.cnn_activation_function = params["cnn_activation_function"]
 
         self.batch_size = params["batch_size"]
-        self.chunk_size = params["chunk_size"]
+        self.seq_len = params["seq_len"]
 
         self.seed_episodes = params["seed_episodes"]
-
-        self.learning_rate_schedule = params["learning_rate_schedule"]
-
-        self.worldmodel_LogProbLoss = params["worldmodel_LogProbLoss"]
+        self.seed_steps = params["seed_steps"]
 
         self.experience_size = params["experience_size"]
         self.bit_depth = params["bit_depth"]
+        self.kl_loss_weight = params['kl_loss_weight']
+        self.latent_distribution = params['latent_distribution']
+        self.discrete_latent_dimensions = params['discrete_latent_dimensions']
+        self.discrete_latent_classes = params['discrete_latent_classes']
 
-        """
-        Initialize MPC parameters.
-        """
+        if self.latent_distribution == 'Categorical':
+            self.state_size = self.discrete_latent_dimensions * self.discrete_latent_classes
+
+        self.jit = params['jit']
 
         self.planning_horizon = params["planning_horizon"]
-        self.optimisation_iters = params["optimisation_iters"]
-        self.candidates = params["candidates"]
-        self.top_candidates = params["top_candidates"]
+
+        self.pixel_observation = params['pixel_observation']
+
+        """
+                Initialize MPC parameters.
+        """
+        self.optimisation_iters = params["MPC"]["optimisation_iters"]
+        self.candidates = params["MPC"]["candidates"]
+        self.top_candidates = params["MPC"]["top_candidates"]
 
         self.model_learning_rate = params["model_learning_rate"]
         self.adam_epsilon = params["adam_epsilon"]
-        self.global_kl_beta = params["global_kl_beta"]
+        self.weight_decay = params['weight_decay']
         self.action_noise = params["action_noise"]
         self.grad_clip_norm = params["grad_clip_norm"]
         self.action_repeat = params["action_repeat"]
@@ -79,20 +83,16 @@ class Planet(BaseAgent):
         Initialize the replay buffer and models.
         """
 
-        self.replay_buffer = ExperienceReplay(
+        self.buffer = ExperienceReplay(
             self.experience_size,
-            env.action_size,
+            self.env.action_size,
             self.bit_depth,
+            self.pixel_observation,
+            self.env.observation_size,
             device,
         )
 
         self.initialize_models()
-
-        # Global prior N(0, I).
-        self.global_prior = Normal(
-            torch.zeros(params["batch_size"], params["state_size"], device=device),
-            torch.ones(params["batch_size"], params["state_size"], device=device),
-        )
 
         # Allowed deviation in KL divergence
         self.free_nats = torch.full((1,), params["free_nats"], device=device)
@@ -105,6 +105,7 @@ class Planet(BaseAgent):
         Load models if they exist.
         """
         if params["models"] != "" and os.path.exists(params["models"]):
+            print("Loading models...")
             model_dicts = torch.load(params["models"])
             self.transition_model.load_state_dict(model_dicts["transition_model"])
             self.observation_model.load_state_dict(model_dicts["observation_model"])
@@ -138,16 +139,20 @@ class Planet(BaseAgent):
         """
 
         total_steps = 0
-        for s in range(1, self.seed_episodes + 1):
+        s = 0
+        while total_steps < self.seed_steps:
+        # for s in range(1, self.seed_episodes + 1):
             done = False
             t = 0
             observation = self.env.reset()
+            # print(f'observation.shape={observation.shape}')
             while not done:
                 action = self.env.sample_random_action()
                 next_observation, reward, done = self.env.step(action)
-                self.replay_buffer.append(observation, action, reward, done)
+                self.buffer.append(observation, action, reward, done)
                 observation = next_observation
                 t += 1
+            s += 1
 
             total_steps += t * self.action_repeat
         self.env.close()
@@ -157,42 +162,48 @@ class Planet(BaseAgent):
         """
         Initialize the different models.
         """
+        self.transition_model = TransitionModel(
+            self.belief_size,
+            self.state_size,
+            self.action_size,
+            self.hidden_size,
+            self.embedding_size,
+            self.dense_activation_function,
+            latent_distribution=self.latent_distribution,
+            discrete_latent_dimensions=self.discrete_latent_dimensions,
+            discrete_latent_classes=self.discrete_latent_classes
+        ).to(device=device)
 
-        self.transition_model = torch.jit.script(
-            TransitionModel(
+        self.reward_model = DenseModel(
+            self.belief_size + self.state_size,
+            self.hidden_size,
+            activation=self.dense_activation_function,
+        ).to(device=device)
+
+        if self.pixel_observation:
+            self.encoder = CnnImageEncoder(
+                    self.embedding_size,
+                    self.cnn_activation_function,
+                ).to(device=device)
+            self.observation_model = ObservationModel(
                 self.belief_size,
                 self.state_size,
-                self.action_size,
-                self.hidden_size,
-                self.embedding_size,
-                self.dense_activation_function,
-            ).to(device=device)
-        )
-
-        self.observation_model = torch.jit.script(
-            ObservationModel(
-                self.belief_size,
-                self.state_size,
-                self.embedding_size,
-                self.cnn_activation_function,
-            ).to(device=device)
-        )
-
-        self.reward_model = torch.jit.script(
-            RewardModel(
-                self.belief_size,
-                self.state_size,
-                self.hidden_size,
-                self.dense_activation_function,
-            ).to(device=device)
-        )
-
-        self.encoder = torch.jit.script(
-            CnnImageEncoder(
                 self.embedding_size,
                 self.cnn_activation_function,
             ).to(device=device)
-        )
+        else:
+            self.encoder = DenseModel(
+                self.env.observation_size,
+                self.hidden_size,
+                self.embedding_size,
+                self.dense_activation_function
+            )
+            self.observation_model = DenseModel(
+                self.belief_size + self.state_size,
+                self.hidden_size,
+                self.env.observation_size,
+                self.dense_activation_function
+            )
 
         self.planner = MPCPlanner(
             self.action_size,
@@ -203,6 +214,13 @@ class Planet(BaseAgent):
             self.transition_model,
             self.reward_model,
         )
+
+        if self.jit:
+            self.transition_model = torch.jit.script(self.transition_model)
+            self.observation_model = torch.jit.script(self.observation_model)
+            self.reward_model = torch.jit.script(self.reward_model)
+            self.encoder = torch.jit.script(self.encoder)
+            self.planner = torch.jit.script(self.planner)
 
     def initialize_optimizers(self) -> None:
         """
@@ -222,97 +240,74 @@ class Planet(BaseAgent):
             + list(self.reward_model.parameters())
             + list(self.encoder.parameters())
         )
+
         self.model_optimizer = optim.Adam(
-            self.model_params, lr=self.model_learning_rate, eps=self.adam_epsilon
+            self.model_params,
+            lr=self.model_learning_rate,
+            eps=self.adam_epsilon,
+            weight_decay=self.weight_decay
         )
 
-    def observation_loss(
-        self, beliefs: Tensor, posterior_states: Tensor, observations: Tensor
+    @typechecked
+    def _observation_loss(
+            self,
+            beliefs: TensorType['seq_len', 'batch_size', 'belief_size'],
+            posterior_states: TensorType['seq_len', 'batch_size', 'state_size'],
+            observations: Union[TensorType['seq_len', 'batch_size', 'channels', 'height', 'width'],
+                                TensorType['seq_len', 'batch_size', 'observation_size']]
     ) -> Tensor:
         """
         Compute the observation loss.
-        Args:
-            beliefs:            (L-1, B, S)
-            posterior_states:   (L-1, B, S)
-            observations:       (L, B, C, H, W)
-        Returns:
-            reward_loss: Tensor
         """
-
-        if self.worldmodel_LogProbLoss:
-            observation_dist = Normal(
-                bottle(self.observation_model, (beliefs, posterior_states)), 1
-            )
-            observation_loss = (
-                -observation_dist.log_prob(observations[1:])
-                .sum(dim=(2, 3, 4))
-                .mean(dim=(0, 1))
-            )
+        means = self.observation_model(beliefs, posterior_states)
+        # print(observations.shape, "TWWWWRWR")
+        if self.pixel_observation:
+            observation_dist = Independent(Normal(means, 1), 3)  # independent for matching dims
         else:
-            observation_loss = (
-                F.mse_loss(
-                    bottle(self.observation_model, (beliefs, posterior_states)),
-                    observations[1:],
-                    reduction="none",
-                )
-                .sum(dim=(2, 3, 4))
-                .mean(dim=(0, 1))
-            )
+            observation_dist = Independent(Normal(means, 1), 1)
+        observation_loss = -observation_dist.log_prob(observations).mean()
         return observation_loss
 
-    def reward_loss(
-        self, beliefs: Tensor, posterior_states: Tensor, rewards: Tensor
+    @typechecked
+    def _reward_loss(
+        self,
+            beliefs: TensorType['seq_len', 'batch_size', 'belief_size'],
+            posterior_states: TensorType['seq_len', 'batch_size', 'state_size'],
+            rewards: TensorType['seq_len', 'batch_size']
     ) -> Tensor:
         """
-        Compute the reward loss. L=Chunk size, B=Batch Size
-
-        Args:
-            beliefs: Tensor (L-1, B, )
-            posterior_states: Tensor
-            rewards: Tensor
-        Returns:
-            reward_loss: Tensor
+        Compute the reward loss
         """
-
-        if self.worldmodel_LogProbLoss:
-            reward_dist = Normal(
-                bottle(self.reward_model, (beliefs, posterior_states)), 1
-            )
-            reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
-        else:
-            reward_loss = F.mse_loss(
-                bottle(self.reward_model, (beliefs, posterior_states)),
-                rewards[:-1],
-                reduction="none",
-            ).mean(dim=(0, 1))
+        means = self.reward_model(beliefs, posterior_states)
+        reward_dist = Independent(Normal(means, 1), 1)
+        reward_loss = -reward_dist.log_prob(rewards.unsqueeze(dim=-1)).mean()
         return reward_loss
 
-    def kl_loss(
-        self,
-        posterior_means: Tensor,
-        posterior_std_devs: Tensor,
-        prior_means: Tensor,
-        prior_std_devs: Tensor,
+    def _kl_loss(
+            self,
+            posterior_params: Tuple[Tensor, ...],
+            prior_params: Tuple[Tensor, ...],
     ) -> Tensor:
         """
         Compute the KL loss.
         """
+        # extract Gaussian params
+        posterior_means, posterior_std_devs = posterior_params
+        prior_means, prior_std_devs = prior_params
 
         div = kl_divergence(
             Normal(posterior_means, posterior_std_devs),
             Normal(prior_means, prior_std_devs),
         ).sum(dim=2)
 
-        # Note:
-        # Normalisation by overshooting distance and weighting by overshooting distance cancel out
+        # this is the free bits optimization presented in
+        # Improved Variational Inference with Inverse Autoregressive Flow : C.8.
+        # https://arxiv.org/abs/1606.04934
         kl_loss = torch.max(div, self.free_nats).mean(dim=(0, 1))
-        if self.global_kl_beta != 0:
-            kl_loss += self.global_kl_beta * kl_divergence(
-                Normal(posterior_means, posterior_std_devs), self.global_prior
-            ).sum(dim=2).mean(dim=(0, 1))
+
         return kl_loss
 
-    def train_step(self) -> dict:
+    def train_step(self) -> Dict[str, float]:
         """
         Train the model for one step.
         """
@@ -322,13 +317,9 @@ class Planet(BaseAgent):
         # DYNAMICS LEARNING
         ####################
 
-        # 1) Draw Sequences
-
-        # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly
-        # at random from the dataset (including terminal flags)
-        # Transitions start at time t = 0
-        observations, actions, rewards, nonterminals = self.replay_buffer.sample(
-            self.batch_size, self.chunk_size
+        # 1) Draw sequences chunks
+        observations, actions, rewards, nonterminals = self.buffer.sample(
+            self.batch_size, self.seq_len
         )
 
         # 2) Compute model States
@@ -338,19 +329,18 @@ class Planet(BaseAgent):
 
         # Update belief/state using posterior from previous belief/state,
         # previous action and current observation (over entire sequence at once)
+        embeddings = self.encoder(observations[1:])
         (
             beliefs,
-            _, # prior_states, just in case
-            prior_means,
-            prior_std_devs,
+            _,  # prior_states, just in case
+            prior_params,
             posterior_states,
-            posterior_means,
-            posterior_std_devs,
+            posterior_params,
         ) = self.transition_model(
             init_state,
             actions[:-1],
             init_belief,
-            bottle(self.encoder, (observations[1:],)),
+            embeddings,
             nonterminals[:-1],
         )
 
@@ -358,30 +348,22 @@ class Planet(BaseAgent):
 
         # Calculate observation likelihood, reward likelihood and KL losses
         # sum over final dims, average over batch and time
-        observation_loss = self.observation_loss(
-            beliefs, posterior_states, observations
-        )
-        reward_loss = self.reward_loss(beliefs, posterior_states, rewards)
-        kl_loss = self.kl_loss(
-            posterior_means, posterior_std_devs, prior_means, prior_std_devs
-        )
-        model_loss = observation_loss + reward_loss + kl_loss
+        observation_loss = self._observation_loss(beliefs, posterior_states, observations[1:])
+        reward_loss = self._reward_loss(beliefs, posterior_states, rewards[:-1])
+        kl_loss = self._kl_loss(posterior_params, prior_params)
+        model_loss = observation_loss + reward_loss + kl_loss * self.kl_loss_weight
 
+        # log stuff
         log["observation_loss"] = observation_loss.item()
         log["reward_loss"] = reward_loss.item()
         log["kl_loss"] = kl_loss.item()
         log["model_loss"] = model_loss.item()
 
-        # TODO: add a learning rate schedule
         # Update model parameters
         self.model_optimizer.zero_grad()
         model_loss.backward()
         nn.utils.clip_grad_norm_(self.model_params, self.grad_clip_norm, norm_type=2)
         self.model_optimizer.step()
-
-        # for dreamer, ugly for the moment
-        self.posterior_states = posterior_states
-        self.beliefs = beliefs
 
         return log
 
@@ -391,24 +373,25 @@ class Planet(BaseAgent):
         """
         Update belief and action given an observation.
         """
-
+        embedding = self.encoder(observation).unsqueeze(dim=0)
         # Infer belief over current state q(s_t|o≤t,a<t) from the history
         # Action and observation need extra time dimension
-        belief, _, _, _, posterior_state, _, _ = self.transition_model(
+        belief, _, _, posterior_state, _ = self.transition_model(
             posterior_state,
             action.unsqueeze(dim=0),
             belief,
-            self.encoder(observation).unsqueeze(dim=0),
+            embedding,
         )
         # Remove time dimension from belief/state
         belief = belief.squeeze(dim=0)
         posterior_state = posterior_state.squeeze(dim=0)
 
         # Get action from planner(q(s_t|o≤t,a<t), p)
-        action = self.get_action(belief, posterior_state)
+        action, _ = self.get_action(belief, posterior_state)
 
         if explore:
             # Add gaussian exploration noise on top of the sampled action
+            # print(self.action_noise, action)
             action = torch.clamp(Normal(action, self.action_noise).rsample(), -1, 1)
 
         # Perform environment step (action repeats handled internally)

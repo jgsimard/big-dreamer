@@ -1,4 +1,4 @@
-from typing import Union, Optional, List
+from typing import Union, Optional, List, Tuple
 
 import numpy as np
 import torch
@@ -7,10 +7,17 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 import torch.distributions as D
 
-from utils import cat
+
+from torchtyping import TensorType, patch_typeguard
+from typeguard import typechecked
+
+from utils import cat, stack, prefill, build_mlp
 
 
 Activation = Union[str, nn.Module]
+
+patch_typeguard()
+
 
 
 def bottle(f, x_tuple: tuple) -> Tensor:
@@ -34,30 +41,80 @@ def bottle(f, x_tuple: tuple) -> Tensor:
     return output
 
 
-class BeliefModel(nn.Module):
+class GaussianBeliefModel(nn.Module):
     """
-    Belief model
+    Gaussian belief model (for PlaNet and DreamerV1)
     """
-
-    def __init__(self, input_size, hidden_size, state_size, activation, min_std_dev):
+    def __init__(
+            self,
+            input_size: int,
+            hidden_size: int,
+            state_size: int,
+            activation: str,
+            min_std_dev: float
+    ) -> None:
         super().__init__()
         self.min_std_dev = min_std_dev
-        self.belief_fc = nn.Sequential(nn.Linear(input_size, hidden_size), activation())
-        self.state_fc = nn.Linear(hidden_size, 2 * state_size)
+        self.model = build_mlp(input_size, hidden_size, 2*state_size, 1, activation)
 
-    def forward(self, belief):
+    def forward(
+            self,
+            belief: Tensor
+    ) -> Tuple[Tensor, Tuple[Tensor, ...]]:
         """
         Args:
             belief (Tensor): belief of shape: (batch_size, belief_size)
-
         Returns:
             Tensor: belief of shape: (batch_size, belief_size)
         """
-
-        hidden = self.belief_fc(belief)
-        mean, _std_dev = torch.chunk(self.state_fc(hidden), 2, dim=1)
+        mean, _std_dev = torch.chunk(self.model(belief), 2, dim=1)
         std_dev = F.softplus(_std_dev) + self.min_std_dev
-        return mean, std_dev
+        state = mean + std_dev * torch.randn_like(mean)
+        return state, (mean, std_dev)
+
+
+class CategoricalBeliefModel(nn.Module):
+    """
+    CategoricalBeliefModel
+    """
+    def __init__(
+            self,
+            input_size: int,
+            hidden_size: int,
+            discrete_latent_dimensions: int,
+            discrete_latent_classes: int,
+            activation: str
+    ) -> None:
+        super().__init__()
+        self.discrete_latent_dimensions = discrete_latent_dimensions
+        self.discrete_latent_classes = discrete_latent_classes
+        self.dim = discrete_latent_classes * discrete_latent_dimensions
+        self.model = build_mlp(
+            input_size,
+            hidden_size,
+            self.dim,
+            1,
+            activation
+        )
+        assert discrete_latent_classes
+
+    def forward(self, belief: Tensor) -> Tuple[Tensor, Tuple[Tensor, ...]]:
+        """
+        Args:
+            belief (Tensor): belief of shape: (batch_size, belief_size)
+        Returns:
+            Tensor: belief of shape: (batch_size, belief_size)
+        """
+        logits = self.model(belief)
+        batch_shape = logits.shape[:-1]
+        shape = (*batch_shape, self.discrete_latent_dimensions, self.discrete_latent_classes)
+        logits = logits.reshape(shape)
+        # use straight through gradient
+        # https://arxiv.org/abs/1308.3432
+        dist = D.OneHotCategoricalStraightThrough(logits=logits)
+        state = dist.rsample()
+        state = state.view(*batch_shape, self.dim)
+        return state, (logits,)
 
 
 class TransitionModel(nn.Module):
@@ -72,8 +129,11 @@ class TransitionModel(nn.Module):
         action_size: int,
         hidden_size: int,
         embedding_size: int,
-        activation: Optional[str] = "relu",
+        activation: Optional[str] = "ELU",
         min_std_dev: float = 0.1,
+        latent_distribution: Optional[str] = "Gaussian",
+        discrete_latent_dimensions: Optional[int] = 32,
+        discrete_latent_classes: Optional[int] = 32
     ) -> None:
         super().__init__()
 
@@ -82,24 +142,44 @@ class TransitionModel(nn.Module):
             activation = getattr(nn, activation)
         self.min_std_dev = min_std_dev
 
+        assert latent_distribution in ["Gaussian", "Categorical"], f"{latent_distribution}"
+        self.latent_distribution = latent_distribution
+
         # recurrent component
         self.rnn = nn.GRUCell(belief_size, belief_size)
 
         # model components
-        self.fc_embed_state_action = nn.Sequential(
-            nn.Linear(state_size + action_size, belief_size), activation()
+        self.fc_embed_state_action = build_mlp(
+            state_size+action_size, -1, belief_size, 0, output_activation=activation
         )
 
-        self.belief_prior = BeliefModel(
-            belief_size, hidden_size, state_size, activation, min_std_dev
-        )
-        self.belief_posterior = BeliefModel(
-            belief_size + embedding_size,
-            hidden_size,
-            state_size,
-            activation,
-            min_std_dev,
-        )
+        # Belief models
+        if self.latent_distribution == "Gaussian":
+            self.belief_prior = GaussianBeliefModel(
+                belief_size, hidden_size, state_size, activation, min_std_dev
+            )
+            self.belief_posterior = GaussianBeliefModel(
+                belief_size + embedding_size,
+                hidden_size,
+                state_size,
+                activation,
+                min_std_dev,
+            )
+        elif self.latent_distribution == "Categorical":
+            self.belief_prior = CategoricalBeliefModel(
+                belief_size,
+                hidden_size,
+                discrete_latent_dimensions,
+                discrete_latent_classes,
+                activation
+            )
+            self.belief_posterior = CategoricalBeliefModel(
+                belief_size + embedding_size,
+                hidden_size,
+                discrete_latent_dimensions,
+                discrete_latent_classes,
+                activation
+            )
 
         self.modules = [
             self.fc_embed_state_action,
@@ -107,14 +187,15 @@ class TransitionModel(nn.Module):
             self.belief_posterior,
         ]
 
+    @typechecked
     def forward(
         self,
-        init_state: Tensor,
-        actions: Tensor,
-        init_belief: Tensor,
-        observations: Optional[Tensor] = None,
-        nonterminals: Optional[Tensor] = None,
-    ) -> List[Tensor]:
+        init_state: TensorType['batch_size', 'state_size'],
+        actions: TensorType['seq_len', 'batch_size', 'action_size'],
+        init_belief: TensorType['batch_size', 'belief_size'],
+        embeddings: Optional[TensorType['seq_len', 'batch_size', 'embedding_size']] = None,
+        nonterminals: Optional[TensorType['seq_len', 'batch_size', 1]] = None,
+    ) -> Tuple[Tensor, Tensor, Tuple[Tensor, ...], Optional[Tensor], Optional[Tuple[Tensor, ...]]]:
         """
         L=Chunk size, B=Batch size, Hi=Hidden size, Be=Belief size, S=State Size, A=Action size
         Input:
@@ -126,74 +207,96 @@ class TransitionModel(nn.Module):
         Output:
             beliefs:            (L-1, B, Be)
             prior_states:       (L-1, B, S)
-            prior_means:        (L-1, B, S)
-            prior_std_devs:     (L-1, B, S)
+            prior_params:       (L-1, B, S)
             posterior_states:   (L-1, B, S)
-            posterior_means:    (L-1, B, S)
-            posterior_std_devs: (L-1, B, S)
+            posterior_params:   (L-1, B, S)
         """
 
         # Create lists for hidden states
         # (cannot use single tensor as buffer because autograd won't work with inplace writes)
+        # print("Twerk 1")
         T = actions.size(0) + 1
-        beliefs = [torch.empty(0)] * T
-        prior_states = [torch.empty(0)] * T
-        prior_means = [torch.empty(0)] * T
-        prior_std_devs = [torch.empty(0)] * T
-        posterior_states = [torch.empty(0)] * T
-        posterior_means = [torch.empty(0)] * T
-        posterior_std_devs = [torch.empty(0)] * T
+        beliefs = prefill(T)
+        prior_states = prefill(T)
+        posterior_states = prefill(T)
 
+        if self.latent_distribution == "Gaussian":
+            prior_means = prefill(T)
+            prior_std_devs = prefill(T)
+            posterior_means = prefill(T)
+            posterior_std_devs = prefill(T)
+        elif self.latent_distribution == "Categorical":
+            prior_logits = prefill(T)
+            posterior_logits = prefill(T)
+
+        # print("Twerk 2")
         beliefs[0] = init_belief
         prior_states[0] = init_state
         posterior_states[0] = init_state
 
+        # print("Twerk 3")
         # Loop over time sequence
         for t in range(T - 1):
             # Select appropriate previous state
-            _state = prior_states[t] if observations is None else posterior_states[t]
+            _state = prior_states[t] if embeddings is None else posterior_states[t]
 
+            # print("Twerk 4")
+            # print(f'_state.shape={_state.shape}')
+            # print(f'nonterminals[t].shape={nonterminals[t].shape}')
             # Mask if previous transition was terminal
             _state = _state if nonterminals is None else _state * nonterminals[t]
 
+            # print("Twerk 5")
             # Compute belief (deterministic hidden state)
             hidden = self.fc_embed_state_action(cat(_state, actions[t]))
             beliefs[t + 1] = self.rnn(hidden, beliefs[t])
 
+            # print("Twerk 6")
             # Compute state prior by applying transition dynamics
-            prior_means[t + 1], prior_std_devs[t + 1] = self.belief_prior(
-                beliefs[t + 1]
-            )
-            prior_states_noise = prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])
-            prior_states[t + 1] = prior_means[t + 1] + prior_states_noise
+            prior_states[t + 1], prior_params_ = self.belief_prior(beliefs[t + 1])
+            if self.latent_distribution == "Gaussian":
+                prior_means[t + 1], prior_std_devs[t + 1] = prior_params_
+            elif self.latent_distribution == "Categorical":
+                prior_logits[t + 1] = prior_params_
 
-            if observations is not None:
+            if embeddings is not None:
                 # Compute state posterior by applying transition dynamics and using
                 # current observation.
+                t_ = t - 1  # Using t_ to deal with different time indexing for observations
+                posterior_input = cat(beliefs[t + 1], embeddings[t_ + 1])
+                posterior_states[t + 1], post_params_ = self.belief_posterior(posterior_input)
+                if self.latent_distribution == "Gaussian":
+                    posterior_means[t + 1], posterior_std_devs[t + 1] = post_params_
+                elif self.latent_distribution == "Categorical":
+                    posterior_logits[t + 1] = post_params_
 
-                t_ = t - 1 # Using t_ to deal with different time indexing for observations
-
-                (
-                    posterior_means[t + 1],
-                    posterior_std_devs[t + 1]
-                 ) = self.belief_posterior(cat(beliefs[t + 1], observations[t_ + 1]))
-                noise = torch.randn_like(posterior_means[t + 1])
-                posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[t + 1] * noise
-
+        # print("Twerk 7")
+        # print(len(beliefs), [b.shape for b in beliefs])
+        # print(len(prior_states), [b.shape for b in prior_states])
         # Return new hidden states
-        hidden = [
-            torch.stack(beliefs[1:], dim=0),
-            torch.stack(prior_states[1:], dim=0),
-            torch.stack(prior_means[1:], dim=0),
-            torch.stack(prior_std_devs[1:], dim=0),
-        ]
-        if observations is not None:
-            hidden += [
-                torch.stack(posterior_states[1:], dim=0),
-                torch.stack(posterior_means[1:], dim=0),
-                torch.stack(posterior_std_devs[1:], dim=0),
-            ]
-        return hidden
+        beliefs = stack(beliefs)
+        prior_states = stack(prior_states)
+
+        prior_params = None
+        if self.latent_distribution == "Gaussian":
+            prior_params = (stack(prior_means), stack(prior_std_devs))
+        elif self.latent_distribution == "Categorical":
+            prior_params = (stack(prior_logits),)
+
+        # print("Twerk 8")
+        # add posterior computations if observations were present
+        if embeddings is not None:
+            posterior_states = stack(posterior_states)
+            # add posterior params
+            posterior_params = None
+            if self.latent_distribution == "Gaussian":
+                posterior_params = (stack(posterior_means), stack(posterior_std_devs))
+            elif self.latent_distribution == "Categorical":
+                posterior_params = (stack(posterior_logits))
+        else:
+            posterior_states, posterior_params = None, None
+
+        return beliefs, prior_states, prior_params, posterior_states, posterior_params
 
 
 class Reshape(nn.Module):
@@ -230,6 +333,7 @@ class ObservationModel(nn.Module):
 
         if isinstance(activation, str):
             activation = getattr(nn, activation)
+        self.output_shape = (3, 64, 64)
 
         self.decoder = nn.Sequential(
             nn.Linear(belief_size + state_size, embedding_size),
@@ -243,77 +347,120 @@ class ObservationModel(nn.Module):
             nn.ConvTranspose2d(32, 3, 6, 2),
         )
 
-    def forward(self, belief: Tensor, state: Tensor) -> Tensor:
+    def forward(
+            self,
+            belief: Tensor,
+            state: Tensor
+    ) -> Tensor:
         """
         Forward pass.
         """
-        return self.decoder(cat(belief, state))
+        batch_shape = belief.shape[:-1]  # L,B or just B
+        x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
+        x = self.decoder(x)
+        x = x.view(*batch_shape, *self.output_shape)
+        return x
 
 
-class RewardModel(nn.Module):
+class DenseModel(nn.Module):
     """
-    Reward model.
+    Dense model.
     """
 
     def __init__(
-        self,
-        belief_size: int,
-        state_size: int,
-        hidden_size: int,
-        activation: Activation = "relu",
+            self,
+            input_size: int,
+            # belief_size: int,
+            # state_size: int,
+            hidden_size: int,
+            output_size: int = 1,
+            activation: str = "ELU",
+            n_layers: int = 4,
+            distribution: str = 'normal'
     ) -> None:
         super().__init__()
+        self.model = build_mlp(input_size, hidden_size, output_size, n_layers, activation)
+        # self.model = build_mlp(belief_size + state_size, hidden_size, 1, n_layers, activation)
+        self.distribution = distribution
 
-        if isinstance(activation, str):
-            activation = getattr(nn, activation)
-
-        self.model = nn.Sequential(
-            nn.Linear(belief_size + state_size, hidden_size),
-            activation(),
-            nn.Linear(hidden_size, hidden_size),
-            activation(),
-            nn.Linear(hidden_size, 1),
-        )
-
-    def forward(self, belief: Tensor, state: Tensor) -> Tensor:
+    # def forward(self, belief: Tensor, state: Tensor) -> Tensor:
+    #     """
+    #     Forward pass.
+    #     """
+    #     x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
+    #     x = self.model(x)
+    #     return x
+    def forward(self, *args: Tuple[Tensor]) -> Tensor:
         """
         Forward pass.
         """
-        return self.model(cat(belief, state)).squeeze(dim=1)
+        if len(args) == 2:
+            # print("Twerk")
+            belief, state = args
+            # print("Twerk 2")
+            # print(belief.shape, state.shape)
+            x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
+            # print("Twerk 3")
+        else:
+            x, = args
+
+        x = self.model(x)
+        return x
+
+# class RewardModel(nn.Module):
+#     """
+#     Reward model.
+#     """
+#
+#     def __init__(
+#         self,
+#         belief_size: int,
+#         state_size: int,
+#         hidden_size: int,
+#         activation: str = "ELU",
+#         n_layers:int = 4
+#     ) -> None:
+#         super().__init__()
+#         self.model = build_mlp(belief_size+state_size, hidden_size, 1, n_layers, activation)
+#
+#     def forward(self, belief: Tensor, state: Tensor) -> Tensor:
+#         """
+#         Forward pass.
+#         """
+#         x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
+#         x = self.model(x)
+#         return x
 
 
-class CriticModel(nn.Module):
-    """
-    Critic model.
-    """
-
-    def __init__(
-        self,
-        belief_size: int,
-        state_size: int,
-        hidden_size: int,
-        activation_function: Optional[str] = "relu",
-    ) -> None:
-        super().__init__()
-        if isinstance(activation_function, str):
-            activation_function = getattr(nn, activation_function)
-        self.model = nn.Sequential(
-            nn.Linear(belief_size + state_size, hidden_size),
-            activation_function(),
-            nn.Linear(hidden_size, hidden_size),
-            activation_function(),
-            nn.Linear(hidden_size, hidden_size),
-            activation_function(),
-            nn.Linear(hidden_size, 1),
-        )
-
-    def forward(self, belief, state):
-        """
-        Forward pass.
-        Input: belief, state
-        """
-
-        return self.model(cat(belief, state)).squeeze(dim=1)
+# class CriticModel(nn.Module):
+#     """
+#     Critic model.
+#     """
+#
+#     def __init__(
+#         self,
+#         belief_size: int,
+#         state_size: int,
+#         hidden_size: int,
+#         activation: Optional[str] = "ELU",
+#         n_layers: int = 4
+#     ) -> None:
+#         super().__init__()
+#
+#         self.model = build_mlp(
+#             input_size = belief_size + state_size,
+#             output_size = 1,
+#             n_layers = n_layers,
+#             hidden_size = hidden_size,
+#             activation = activation
+#         )
+#     def forward(self, belief, state):
+#         """
+#         Forward pass.
+#         Input: belief, state
+#         """
+#
+#         return self.model(cat(belief, state)).squeeze(dim=1)
 
 
 class ActorModel(nn.Module):
@@ -327,42 +474,54 @@ class ActorModel(nn.Module):
         state_size: int,
         hidden_size: int,
         action_size: int,
-        activation_function: str = "elu",
+        activation_function: str = "ELU",
+        action_distribution: str = 'Gaussian',
         min_std: float = 1e-4,
         init_std: float = 5,
         mean_scale: float = 5,
+        n_layers: int = 4
     ) -> None:
         super().__init__()
-        if isinstance(activation_function, str):
-            activation_function = getattr(nn, activation_function)
-        self.module = nn.Sequential(
-            nn.Linear(belief_size + state_size, hidden_size),
-            activation_function(),
-            nn.Linear(hidden_size, hidden_size),
-            activation_function(),
-            nn.Linear(hidden_size, hidden_size),
-            activation_function(),
-            nn.Linear(hidden_size, hidden_size),
-            activation_function(),
-            nn.Linear(hidden_size, 2 * action_size),
+        if action_distribution == 'Gaussian':
+            output_size = 2 * action_size
+        elif action_distribution == 'Categorical':
+            output_size = action_size
+        else:
+            NotImplementedError()
+
+        self.model = build_mlp(
+            input_size=belief_size + state_size,
+            output_size= output_size,
+            n_layers=n_layers,
+            hidden_size=hidden_size,
+            activation=activation_function
         )
 
         self._min_std = min_std
         self._init_std = init_std
         self._mean_scale = mean_scale
         self.raw_init_std = torch.log(torch.exp(torch.tensor(self._init_std)) - 1)
+        self.action_distribution = action_distribution
 
     def forward(self, belief, state):
         """
         Forward pass.
         Input: belief, state
         """
-        action = self.module(cat(belief, state)).squeeze(dim=1)
+        out_model = self.model(cat(belief, state)).squeeze(dim=1)
 
-        action_mean, action_std_dev = torch.chunk(action, 2, dim=1)
-        action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
-        action_std = F.softplus(action_std_dev + self.raw_init_std) + self._min_std
-        return action_mean, action_std
+        if self.action_distribution == 'Gaussian':
+            action_mean, action_std_dev = torch.chunk(out_model, 2, dim=1)
+            action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
+            action_std = F.softplus(action_std_dev + self.raw_init_std) + self._min_std
+            return action_mean, action_std
+        if self.action_distribution == 'Categorical':
+            action_dist = self.get_action_dist(out_model)
+            action = action_dist.sample()
+            action = action + action_dist.probs - action_dist.probs.detach()
+            return action, action_dist
+
+        raise NotImplementedError()
 
 
 class CnnImageEncoder(nn.Module):
@@ -370,7 +529,7 @@ class CnnImageEncoder(nn.Module):
     CNN image encoder.
     """
 
-    def __init__(self, embedding_size: int, activation: Activation = "relu") -> None:
+    def __init__(self, embedding_size: int, activation: Activation = "ELU") -> None:
         super().__init__()
 
         if isinstance(activation, str):
@@ -397,7 +556,12 @@ class CnnImageEncoder(nn.Module):
         Forward pass.
         """
 
-        return self.model(observation)
+        batch_shape = observation.shape[:-3]  # L,B or just B
+        obs_shape = observation.shape[-3:]  # C, W, H
+
+        embedding = self.model(observation.view(-1, *obs_shape))
+        embedding = torch.reshape(embedding, (*batch_shape, -1))
+        return embedding
 
 
 class LinearCombination(nn.Module):
@@ -416,6 +580,41 @@ class LinearCombination(nn.Module):
         """
 
         return self.in1_linear(in1) + self.in1_linear(in2)
+
+
+class DiscountModel(nn.Module):
+    """
+    Discount model as in https://arxiv.org/pdf/2010.02193.pdf
+    """
+    def __init__(
+            self,
+            belief_size: int,
+            embedding_size: int,
+            hidden_size: int,
+            n_layers: int,
+            activation_function: Optional[str] = "relu"
+    ) -> nn.Sequential:
+        super().__init__()
+
+        self.model = build_mlp(
+            input_size=belief_size + embedding_size,
+            output_size=1,
+            n_layers=n_layers,
+            hidden_size=hidden_size,
+            activation=activation_function,
+            output_activation='Identity'
+        )
+
+    def forward(self, belief: Tensor, embedding: Tensor):
+        """
+        Forward pass.
+        """
+        x = cat(belief, embedding)
+        logits = self.model(x)
+        dist = D.Bernoulli(logits=logits)
+        return dist.rsample()
+
+
 
 
 # "atanh", "TanhBijector" and "SampleDist" are from the following repo
@@ -558,86 +757,3 @@ def diag_normal(x: Tensor, min_std=0.1, max_std=2.0):
     mean, std = x.chunk(2, -1)
     std = max_std * torch.sigmoid(std) + min_std
     return D.independent.Independent(D.normal.Normal(mean, std), 1)
-
-
-# TODO Use Importance Weighted VAE to improve performance.
-class RSSM(nn.Module):
-    """
-    RSSM.
-    """
-
-    def __init__(
-        self,
-        embedding_size: int,
-        action_size: int,
-        deterministic_size: int,
-        stochastic_size: int,
-        hidden_size: int,
-        rnn_layers: int,
-    ):
-        super().__init__()
-        self.rnn = nn.GRU(
-            input_size=hidden_size,
-            hidden_size=deterministic_size,
-            num_layers=rnn_layers,
-        )
-
-        self.za_combination = LinearCombination(
-            stochastic_size, action_size, hidden_size
-        )
-
-        self.prior_h = nn.Linear(deterministic_size, hidden_size)
-        self.prior_out = nn.Linear(hidden_size, stochastic_size * 2)
-
-        self.he_combination = LinearCombination(
-            deterministic_size, embedding_size, hidden_size
-        )
-        self.posterior_parameters = nn.Linear(hidden_size, stochastic_size * 2)
-
-    def prior(self, h):
-        """
-        Prior.
-        """
-
-        return self.prior_out(activation_(self.prior_h(h)))
-
-    def forward(
-        self,
-        embedded: Tensor,  # (T, B, embedding_size)
-        action: Tensor,  # (T, B, action_size)
-        # reset: Tensor,  # (T, B)
-        z_in: Tensor,  # (T, B, stochastic_size)
-        h_in: Tensor,  # (T, B, deterministic_size)
-    ):
-        """
-        Forward pass.
-        """
-
-        priors = []
-        posts = []
-        states_h = []
-        samples = []
-        T = action.shape[0]
-        for _ in range(T):
-            za = activation_(self.za_combination(z_in, action))
-            h_out = self.rnn(za, h_in)
-            he = activation_(self.he_combination(h_out, embedded))
-            posterior_parameters = self.posterior_parameters(he)
-            posterior_distribution = diag_normal(posterior_parameters)
-            sample = posterior_distribution.rsample().reshape(action.shape[0], -1)
-
-            # record step
-            posts.append(posterior_parameters)
-            samples.append(sample)
-            states_h.append(h_out)
-
-            # update states for next step
-            h_in = h_out
-            z_in = sample
-
-        posts = torch.stack(posts)  # (T,B,2S)
-        states_h = torch.stack(states_h)  # (T,B,D)
-        samples = torch.stack(samples)  # (T,B,S)
-        priors = self.pri  # (T,B,2S)
-
-        return priors, posts, samples, states_h

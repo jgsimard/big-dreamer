@@ -4,38 +4,36 @@ seed: 0
 disable_cuda: false
 env: 'Pendulum-v0'
 max_episode_length: 1000
-experience_size: 1000000   # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
-cnn_activation_function: 'ReLU'
+experience_size: 1000000
+cnn_activation_function: 'ELU'
 dense_activation_function: 'ELU'
-embedding_size: 1024  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
+embedding_size: 1024
 hidden_size: 200
+n_layers: 4
 belief_size: 200
 state_size: 30
 action_repeat: 2
 action_noise: 0.3
-episodes: 1000
-seed_episodes: 5
-collect_interval: 100
+episodes: 1000 # deprecated
+seed_episodes: 1 # deprecated
+seed_steps : 5000
+train_steps: 1000000
+collect_interval: 5
 batch_size: 50
-# chunk_size: 50
-chunk_size: 18
-worldmodel_LogProbLoss: False
-global_kl_beta: 0.0  # Global KL weight (0 to disable)')
+seq_len: 50
 free_nats: 3.0
 bit_depth: 5
-model_learning_rate: 1e-3
-actor_learning_rate: 8e-5
-value_learning_rate: 8e-5
-learning_rate_schedule: 0
-adam_epsilon: 1e-7
-# Note that original has a linear learning rate decay, but it seems unlikely that this makes a significant difference
+model_learning_rate: 2e-4
+
+adam_epsilon: 1e-5
+weight_decay: 1e-6
 grad_clip_norm: 100.0
 planning_horizon: 15
-discount: 0.99
+discount: 0.995
 disclam: 0.95
-optimisation_iters: 10
-candidates: 1000
-top_candidates: 100
+
+
+
 test: False
 test_interval: 25
 test_episodes: 10
@@ -45,7 +43,39 @@ checkpoint_experience: False
 models: ''
 experience_replay: ''
 render: False
-log_freq : 1
+log_freq : 100
 log_video_freq : -1
 wandb_project : null # 'test-project'
 fps: 10
+
+# Dreamer V2
+
+kl_balance:  0.8
+kl_loss_weight: 0.1 # 0.1 for dreamerV2
+
+latent_distribution: "Gaussian" # so far Gaussian, Categorial
+discrete_latent_dimensions: 32
+discrete_latent_classes: 32
+action_distribution: "Gaussian" # so far Gaussian, Categorial
+
+jit: False
+
+MPC:
+ optimisation_iters: 10
+ candidates: 1000
+ top_candidates: 100
+
+ActorCritic:
+ actor_learning_rate: 4e-5
+ value_learning_rate: 1e-4
+ entropy_weight: 1e-5
+ slow_critic_update_interval: 100
+ polyak_avg: 1.0
+ gradient_mixing: -1
+
+use_discount: False
+discount_weight: 5.0
+
+pixel_observation: True
+
+environment_steps_per_update: 10

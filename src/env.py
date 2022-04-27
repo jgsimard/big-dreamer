@@ -1,12 +1,12 @@
 from typing import Tuple, List
 
-import cv2
+# import cv2
 import numpy as np
 import torch
 
 import gym
-from dm_control import suite
-from dm_control.suite.wrappers import pixels
+# from dm_control import suite
+# from dm_control.suite.wrappers import pixels
 
 from utils import images_to_observation
 
@@ -57,7 +57,15 @@ class BaseEnv:
     Base class for our environments.
     """
 
-    def __init__(self, env, seed, max_episode_length, action_repeat, bit_depth) -> None:
+    def __init__(
+            self,
+            env,
+            seed,
+            max_episode_length,
+            action_repeat,
+            bit_depth,
+            pixel_observation
+    ) -> None:
         """
         Initialises base environment attributes.
         """
@@ -65,6 +73,8 @@ class BaseEnv:
         self.seed = seed
         self.max_episode_length = max_episode_length
         self.action_repeat = action_repeat
+
+        self.pixel_observation = pixel_observation
 
         self.bit_depth = bit_depth
         self.t = 0
@@ -109,8 +119,9 @@ class BaseEnv:
         """
         Returns the size of the observation.
         """
-
-        return (self.obs_image_depth, self.obs_image_height, self.obs_image_width)
+        if self.pixel_observation:
+            return self.obs_image_depth, self.obs_image_height, self.obs_image_width
+        return self._env.observation_space.shape[0]
 
     @property
     def action_size(self):
@@ -127,98 +138,99 @@ class BaseEnv:
 
         raise NotImplementedError
 
-class ControlSuiteEnv(BaseEnv):
-    """
-    Wrapper for the control suite.
-    """
 
-    def __init__(
-        self, env, seed, max_episode_length, action_repeat, bit_depth
-    ) -> None:
-        super().__init__(env, seed, max_episode_length, action_repeat, bit_depth)
-
-        domain, task = env.split("-")
-        self._env = suite.load(
-            domain_name=domain, task_name=task, task_kwargs={"random": seed}
-        )
-        self._env = pixels.Wrapper(self._env)
-
-        if action_repeat != CONTROL_SUITE_ACTION_REPEATS[domain]:
-            print(
-                f"WARNING: action repeat {action_repeat} is not recommended for {domain}."
-            )
-
-    def reset(self) -> np.ndarray:
-        """
-        Resets the environment.
-        """
-
-        self.t = 0
-        self._env.reset()
-
-        return images_to_observation(
-            self._env.physics.render(camera_id=0),
-            self.bit_depth,
-            (self.obs_image_height, self.obs_image_width)
-        )
-
-    def step(self, action) -> Tuple[np.ndarray, float, bool, dict]:
-        """
-        Steps the environment.
-        """
-
-        action = action.detach().numpy()
-        reward = 0
-
-        for _ in range(self.action_repeat):
-            state = self._env.step(action)
-            reward += state.reward
-            self.t += 1  # Increment internal timer
-            done = state.last() or self.t == self.max_episode_length
-            if done:
-                break
-
-        observation = images_to_observation(
-            self._env.physics.render(camera_id=0),
-            self.bit_depth,
-            (self.obs_image_height, self.obs_image_width)
-        )
-
-        return observation, reward, done
-
-    def render(self) -> None:
-        """
-        Renders the environment.
-        """
-
-        cv2.imshow("screen", self._env.physics.render(camera_id=0)[:, :, ::-1])
-        cv2.waitKey(1)
-
-    def close(self) -> None:
-        """
-        Closes the environment.
-        """
-
-        cv2.destroyAllWindows()
-        self._env.close()
-
-    @property
-    def action_size(self) -> int:
-        """
-        Returns the size of the action.
-        """
-
-        return self._env.action_spec().shape[0]
-
-    def sample_random_action(self) -> torch.Tensor:
-        """
-        Samples an action randomly from a uniform distribution over all valid actions.
-        """
-
-        spec = self._env.action_spec()
-        return torch.from_numpy(
-            np.random.uniform(spec.minimum, spec.maximum, spec.shape)
-        )
+# class ControlSuiteEnv(BaseEnv):
+#     """
+#     Wrapper for the control suite.
+#     """
+#
+#     def __init__(
+#         self, env, seed, max_episode_length, action_repeat, bit_depth
+#     ) -> None:
+#         super().__init__(env, seed, max_episode_length, action_repeat, bit_depth)
+#
+#         domain, task = env.split("-")
+#         self._env = suite.load(
+#             domain_name=domain, task_name=task, task_kwargs={"random": seed}
+#         )
+#         self._env = pixels.Wrapper(self._env)
+#
+#         if action_repeat != CONTROL_SUITE_ACTION_REPEATS[domain]:
+#             print(
+#                 f"WARNING: action repeat {action_repeat} is not recommended for {domain}."
+#             )
+#
+#     def reset(self) -> np.ndarray:
+#         """
+#         Resets the environment.
+#         """
+#
+#         self.t = 0
+#         self._env.reset()
+#
+#         return images_to_observation(
+#             self._env.physics.render(camera_id=0),
+#             self.bit_depth,
+#             (self.obs_image_height, self.obs_image_width)
+#         )
+#
+#     def step(self, action) -> Tuple[np.ndarray, float, bool, dict]:
+#         """
+#         Steps the environment.
+#         """
+#
+#         action = action.detach().numpy()
+#         reward = 0
+#
+#         for _ in range(self.action_repeat):
+#             state = self._env.step(action)
+#             reward += state.reward
+#             self.t += 1  # Increment internal timer
+#             done = state.last() or self.t == self.max_episode_length
+#             if done:
+#                 break
+#
+#         observation = images_to_observation(
+#             self._env.physics.render(camera_id=0),
+#             self.bit_depth,
+#             (self.obs_image_height, self.obs_image_width)
+#         )
+#
+#         return observation, reward, done
+#
+#     def render(self) -> None:
+#         """
+#         Renders the environment.
+#         """
+#
+#         cv2.imshow("screen", self._env.physics.render(camera_id=0)[:, :, ::-1])
+#         cv2.waitKey(1)
+#
+#     def close(self) -> None:
+#         """
+#         Closes the environment.
+#         """
+#
+#         cv2.destroyAllWindows()
+#         self._env.close()
+#
+#     @property
+#     def action_size(self) -> int:
+#         """
+#         Returns the size of the action.
+#         """
+#
+#         return self._env.action_spec().shape[0]
+#
+#     def sample_random_action(self) -> torch.Tensor:
+#         """
+#         Samples an action randomly from a uniform distribution over all valid actions.
+#         """
+#
+#         spec = self._env.action_spec()
+#         return torch.from_numpy(
+#             np.random.uniform(spec.minimum, spec.maximum, spec.shape)
+#         )
 
 class GymEnv(BaseEnv):
     """
@@ -226,14 +238,13 @@ class GymEnv(BaseEnv):
     """
 
     def __init__(
-        self, env, seed, max_episode_length, action_repeat, bit_depth
+        self, env, seed, max_episode_length, action_repeat, bit_depth, pixel_observation
     ):
-        super().__init__(env, seed, max_episode_length, action_repeat, bit_depth)
+        super().__init__(env, seed, max_episode_length, action_repeat, bit_depth, pixel_observation)
 
         self._env = gym.make(env)
         self._env.seed(seed)
         self._env.action_space.seed(seed)
-
 
     def reset(self) -> np.ndarray:
         """
@@ -241,13 +252,14 @@ class GymEnv(BaseEnv):
         """
 
         self.t = 0
-        self._env.reset()
-
-        return images_to_observation(
-            self._env.render(mode="rgb_array"),
-            self.bit_depth,
-            (self.obs_image_height, self.obs_image_width)
-        )
+        state = self._env.reset()
+        if self.pixel_observation:
+            return images_to_observation(
+                self._env.render(mode="rgb_array"),
+                self.bit_depth,
+                (self.obs_image_height, self.obs_image_width)
+            )
+        return torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
 
     def step(self, action) -> Tuple[np.ndarray, float, bool]:
         """
@@ -258,18 +270,20 @@ class GymEnv(BaseEnv):
         reward = 0
 
         for _ in range(self.action_repeat):
-            _, reward_k, done, _ = self._env.step(action)
+            state, reward_k, done, _ = self._env.step(action)
             reward += reward_k
             self.t += 1  # Increment internal timer
             done = done or self.t == self.max_episode_length
             if done:
                 break
-
-        observation = images_to_observation(
-            self._env.render(mode="rgb_array"),
-            self.bit_depth,
-            (self.obs_image_height, self.obs_image_width)
-        )
+        if self.pixel_observation:
+            observation = images_to_observation(
+                self._env.render(mode="rgb_array"),
+                self.bit_depth,
+                (self.obs_image_height, self.obs_image_width)
+            )
+        else:
+            observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
 
         return observation, reward, done
 
@@ -313,14 +327,15 @@ def Env(params) -> BaseEnv:
     max_episode_length = params["max_episode_length"]
     action_repeat = params["action_repeat"]
     bit_depth = params["bit_depth"]
+    pixel_observation = params['pixel_observation']
 
     if env in GYM_ENVS:
-        return GymEnv(env, seed, max_episode_length, action_repeat, bit_depth)
+        return GymEnv(env, seed, max_episode_length, action_repeat, bit_depth, pixel_observation)
 
-    if env in CONTROL_SUITE_ENVS:
-        return ControlSuiteEnv(
-            env, seed, max_episode_length, action_repeat, bit_depth
-        )
+    # if env in CONTROL_SUITE_ENVS:
+    #     return ControlSuiteEnv(
+    #         env, seed, max_episode_length, action_repeat, bit_depth
+    #     )
 
     raise ValueError(f"Unknown environment: {env}")
 
@@ -330,9 +345,9 @@ class EnvBatcher:
     Wrapper for batching environments together.
     """
 
-    def __init__(self, env_class, env_args, env_kwargs, n) -> None:
+    def __init__(self, env_class, env_params, n) -> None:
         self.n = n
-        self.envs = [env_class(*env_args, **env_kwargs) for _ in range(n)]
+        self.envs = [env_class(env_params) for _ in range(n)]
         self.dones = [True] * n
 
     def reset(self) -> List[np.ndarray]:
