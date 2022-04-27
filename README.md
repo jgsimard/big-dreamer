@@ -4,13 +4,13 @@ This work is based out of an implementation of Planet from: https://github.com/K
 
 ### Running Some of the Stuff
 #### Install Pre-commit configs
-python -m pre_commit install
+`python -m pre_commit install`
 
 #### Tests
-python -m unittest
+`python -m unittest`
 
 #### Code Quality
-python -m pylint src
+`python -m pylint src`
 
 #### How to run Models
 Once every dependencies are installed (following the steps of the next section), you can run the following command to train the a model:
