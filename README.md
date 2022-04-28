@@ -36,10 +36,10 @@ Use `algorithm="dreamerV2"` to run the DreamerV2 algorithm (not complete yet).
 ## Data experiment links
 Our event files from our experiments were too large, and therefore could not be uploaded to gradescope with our code. Feel free to download the following links below:
 
-1. Pendulum-v0 with Planet: https://drive.google.com/file/d/1p27FyXWIBRFniYQ58StAevUmRL7ujxSL/view?usp=sharing
-2. Pendulum-v0 with Dreamer:
-3. HumanoidStandup-v2 with Planet:
-4. HumanoidStandup-v2 with Dreamer:
+1. Pendulum-v0 with Planet: https://drive.google.com/drive/folders/1aMczwHAFEpMfOHOyRq1fcuZbRZRAMAOr?usp=sharing
+2. Pendulum-v0 with Dreamer: https://drive.google.com/drive/folders/1Yu-gkQiN8rU4jdTPAPYdAkjgXgQB66_e?usp=sharing
+3. HumanoidStandup-v2 with Planet: https://drive.google.com/drive/folders/1KmAuxFewt5TeUu9HPek7VfWurapdP5Lq?usp=sharing
+4. HumanoidStandup-v2 with Dreamer: https://drive.google.com/drive/folders/1fiT1SPwoVMlMdtsoUaHcwT4kK31g1sAn?usp=sharing
 
 ## Installation Procedures from Homeworks
 
