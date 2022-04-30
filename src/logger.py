@@ -111,8 +111,8 @@ class Logger:
         """
         def plot_graph(array):
             raise NotImplementedError()
-        im = plot_graph(array)
-        self._summ_writer.add_image(f"{name}_{phase}", im, step)
+        image = plot_graph(array)
+        self._summ_writer.add_image(f"{name}_{phase}", image, step)
 
     def dump_scalars(self, log_path=None):
         """

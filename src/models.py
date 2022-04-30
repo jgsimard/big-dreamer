@@ -19,28 +19,6 @@ Activation = Union[str, nn.Module]
 patch_typeguard()
 
 
-
-def bottle(f, x_tuple: tuple) -> Tensor:
-    """
-    Wraps the input tuple for a function to process a time x batch x features sequence in
-    batch x features (assumes one output)
-
-    Args:
-        f: function to apply to the input tuple
-        x_tuple (Tuple[belief, posterior_states]): tuple of tensors (belief, posterior_states)
-
-    Returns:
-        Tensor: output of f() of shape: (belief[0].size(), belief[1].size(), *f().size()[1:])
-    """
-
-    x_sizes = [x.size() for x in x_tuple]
-    y = f(*[x[0].view(x[1][0] * x[1][1], *x[1][2:]) for x in zip(x_tuple, x_sizes)])
-    y_size = y.size()
-    output = y.view(x_sizes[0][0], x_sizes[0][1], *y_size[1:])
-
-    return output
-
-
 class GaussianBeliefModel(nn.Module):
     """
     Gaussian belief model (for PlaNet and DreamerV1)
@@ -117,7 +95,7 @@ class CategoricalBeliefModel(nn.Module):
         return state, (logits,)
 
 
-class TransitionModel(nn.Module):
+class RSSM(nn.Module):
     """
     Transition model for the MDP.
     """
@@ -152,6 +130,7 @@ class TransitionModel(nn.Module):
         self.fc_embed_state_action = build_mlp(
             state_size+action_size, -1, belief_size, 0, output_activation=activation
         )
+        print(self.fc_embed_state_action)
 
         # Belief models
         if self.latent_distribution == "Gaussian":
@@ -185,6 +164,7 @@ class TransitionModel(nn.Module):
             self.fc_embed_state_action,
             self.belief_prior,
             self.belief_posterior,
+            self.rnn
         ]
 
     @typechecked
@@ -214,7 +194,7 @@ class TransitionModel(nn.Module):
 
         # Create lists for hidden states
         # (cannot use single tensor as buffer because autograd won't work with inplace writes)
-        # print("Twerk 1")
+        # print("TransitionModel.forward 1")
         T = actions.size(0) + 1
         beliefs = prefill(T)
         prior_states = prefill(T)
@@ -229,29 +209,31 @@ class TransitionModel(nn.Module):
             prior_logits = prefill(T)
             posterior_logits = prefill(T)
 
-        # print("Twerk 2")
+        # print("TransitionModel.forward 2")
         beliefs[0] = init_belief
         prior_states[0] = init_state
         posterior_states[0] = init_state
 
-        # print("Twerk 3")
+        # print("TransitionModel.forward 3")
         # Loop over time sequence
         for t in range(T - 1):
             # Select appropriate previous state
             _state = prior_states[t] if embeddings is None else posterior_states[t]
 
-            # print("Twerk 4")
+            # print("TransitionModel.forward 4")
             # print(f'_state.shape={_state.shape}')
             # print(f'nonterminals[t].shape={nonterminals[t].shape}')
             # Mask if previous transition was terminal
             _state = _state if nonterminals is None else _state * nonterminals[t]
 
-            # print("Twerk 5")
+            # print("TransitionModel.forward 5")
             # Compute belief (deterministic hidden state)
+            # print(_state.shape, actions[t].shape, beliefs[t].shape)
             hidden = self.fc_embed_state_action(cat(_state, actions[t]))
+            # print(hidden.shape)
             beliefs[t + 1] = self.rnn(hidden, beliefs[t])
 
-            # print("Twerk 6")
+            # print("TransitionModel.forward 6")
             # Compute state prior by applying transition dynamics
             prior_states[t + 1], prior_params_ = self.belief_prior(beliefs[t + 1])
             if self.latent_distribution == "Gaussian":
@@ -270,7 +252,7 @@ class TransitionModel(nn.Module):
                 elif self.latent_distribution == "Categorical":
                     posterior_logits[t + 1] = post_params_
 
-        # print("Twerk 7")
+        # print("TransitionModel.forward 7")
         # print(len(beliefs), [b.shape for b in beliefs])
         # print(len(prior_states), [b.shape for b in prior_states])
         # Return new hidden states
@@ -283,7 +265,7 @@ class TransitionModel(nn.Module):
         elif self.latent_distribution == "Categorical":
             prior_params = (stack(prior_logits),)
 
-        # print("Twerk 8")
+        # print("TransitionModel.forward 8")
         # add posterior computations if observations were present
         if embeddings is not None:
             posterior_states = stack(posterior_states)

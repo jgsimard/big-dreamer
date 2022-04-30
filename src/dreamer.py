@@ -3,6 +3,7 @@ import copy
 
 import torch
 from torch import optim, nn, Tensor
+from torch.nn.utils import clip_grad_norm_
 from torch.distributions import Normal, kl_divergence, OneHotCategoricalStraightThrough
 import torch.distributions as D
 from torch.distributions.transformed_distribution import TransformedDistribution
@@ -27,6 +28,16 @@ class Dreamer(Planet):
     def __init__(self, params: Dict[str, Any], env):
         super().__init__(params, env)
 
+        self.entropy_weight = params['ActorCritic']["entropy_weight"]
+        self.gradient_mixing = params['ActorCritic']["gradient_mixing"]
+        self.polyak_avg = params['ActorCritic']["polyak_avg"]
+        self.use_target = params['ActorCritic']['use_target']
+        self.discount = params["discount"]
+        self.disclam = params["disclam"]
+        self.kl_balance = params['kl_balance']
+        self.use_discount = params["use_discount"]
+        self.discount_weight = params['discount_weight']
+
         self.actor = ActorModel(
             self.belief_size,
             self.state_size,
@@ -42,12 +53,15 @@ class Dreamer(Planet):
             activation=self.dense_activation_function,
         ).to(device)
 
-        self.critic_target = DenseModel(
-            self.belief_size + self.state_size,
-            self.hidden_size,
-            activation=self.dense_activation_function,
-        ).to(device)
-        self.critic_target = copy.deepcopy(self.critic)
+        self.critic_modules = [self.critic]
+        if self.use_target:
+            self.critic_target = DenseModel(
+                self.belief_size + self.state_size,
+                self.hidden_size,
+                activation=self.dense_activation_function,
+            ).to(device)
+            self.critic_target = copy.deepcopy(self.critic)
+            self.critic_modules += [self.critic_target]
 
         if params['jit']:
             self.actor = torch.jit.script(self.actor)
@@ -66,16 +80,7 @@ class Dreamer(Planet):
             weight_decay=params['weight_decay']
         )
 
-        self.entropy_weight = params['ActorCritic']["entropy_weight"]
-        self.gradient_mixing = params['ActorCritic']["gradient_mixing"]
-        self.polyak_avg = params['ActorCritic']["polyak_avg"]
-        self.discount = params["discount"]
-        self.disclam = params["disclam"]
 
-        self.kl_balance = params['kl_balance']
-
-        self.use_discount = params["use_discount"]
-        self.discount_weight = params['discount_weight']
 
         if self.use_discount:
             self.discount_model = DenseModel(
@@ -259,6 +264,7 @@ class Dreamer(Planet):
         ####################
         # DYNAMICS LEARNING
         ####################
+        # print("HELLO 1")
         # Draw sequences chunks
         obs, actions, rewards, nonterminals = self.buffer.sample(self.batch_size, self.seq_len)
 
@@ -266,9 +272,11 @@ class Dreamer(Planet):
         init_belief = torch.zeros(self.batch_size, self.belief_size, device=device)
         init_state = torch.zeros(self.batch_size, self.state_size, device=device)
 
+        # print("HELLO 2")
         # compute image embeddings
         embeddings = self.encoder(obs[1:])
 
+        # print("HELLO 3")
         beliefs, _, prior_params, posterior_states, posterior_params = self.transition_model(
             init_state,
             actions[:-1],
@@ -278,9 +286,12 @@ class Dreamer(Planet):
         )
         # sum over final dims, average over batch and time
 
+        # print("HELLO 4")
         # compute losses
         observation_loss = self._observation_loss(beliefs, posterior_states, obs[1:])
+        # print("HELLO 5")
         reward_loss = self._reward_loss(beliefs, posterior_states, rewards[:-1])
+        # print("HELLO 6")
         kl_loss = self._kl_loss(posterior_params, prior_params)
         model_loss = observation_loss + reward_loss + kl_loss * self.kl_loss_weight
 
@@ -298,7 +309,7 @@ class Dreamer(Planet):
         # Update model parameters
         self.model_optimizer.zero_grad()
         model_loss.backward()
-        nn.utils.clip_grad_norm_(self.model_params, self.grad_clip_norm, norm_type=2)
+        clip_grad_norm_(self.model_params, self.grad_clip_norm, norm_type=2)
         self.model_optimizer.step()
 
         ####################
@@ -312,12 +323,10 @@ class Dreamer(Planet):
 
         with FreezeParameters(self.model_modules):
             imged_belief, imged_prior_state, _, action_entropy = self.imagine_ahead(
-                actor_states,
-                actor_beliefs
-            )
+                actor_states, actor_beliefs)
 
         # Predict Rewards & Values
-        with FreezeParameters(self.model_modules + [self.critic] + [self.critic_target]):
+        with FreezeParameters(self.model_modules + [self.critic_modules]):
             imged_reward = self.reward_model(imged_belief, imged_prior_state)
             value_pred = self.critic_target(imged_belief, imged_prior_state)
             if self.use_discount:
@@ -361,9 +370,7 @@ class Dreamer(Planet):
 
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
-        nn.utils.clip_grad_norm_(
-            self.actor.parameters(), self.grad_clip_norm, norm_type=2
-        )
+        clip_grad_norm_(self.actor.parameters(), self.grad_clip_norm, norm_type=2)
         self.actor_optimizer.step()
 
         # detach the input tensor from the transition network
@@ -385,9 +392,7 @@ class Dreamer(Planet):
         # Update model parameters
         self.value_optimizer.zero_grad()
         value_loss.backward()
-        nn.utils.clip_grad_norm_(
-            self.critic.parameters(), self.grad_clip_norm, norm_type=2
-        )
+        clip_grad_norm_(self.critic.parameters(), self.grad_clip_norm, norm_type=2)
         self.value_optimizer.step()
 
         return logs

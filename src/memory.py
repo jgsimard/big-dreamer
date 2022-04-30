@@ -14,20 +14,20 @@ class ExperienceReplay:
         self.size = size
         self.pixel_observation = pixel_observation
         if self.pixel_observation:
-            self.observations = np.empty((size, 3, 64, 64), dtype= np.uint8)
+            self.observations = np.empty((size, 3, 64, 64), dtype=np.uint8)
         else:
             # print(f"observation_size={observation_size}")
-            self.observations = np.empty((size, observation_size),dtype=np.float32)
+            self.observations = np.empty((size, observation_size), dtype=np.float32)
 
         self.actions = np.empty((size, action_size), dtype=np.float32)
         self.rewards = np.empty((size,), dtype=np.float32)
         self.nonterminals = np.empty((size, 1), dtype=np.float32)
         self.idx = 0
-        self.full = False  # Tracks if memory has been filled/all slots are valid
-        self.steps, self.episodes = (
-            0,
-            0,
-        )  # Tracks how much experience has been used in total
+        # Tracks if memory has been filled/all slots are valid
+        self.full = False
+        # Tracks how much experience has been used in total
+        self.steps = 0
+        self.episodes = 0
         self.bit_depth = bit_depth
 
     def append(self, observation, action, reward, done):
@@ -48,7 +48,7 @@ class ExperienceReplay:
         self.full = self.full or self.idx == 0
         self.steps, self.episodes = self.steps + 1, self.episodes + (1 if done else 0)
 
-    def _sample_idx(self, L):
+    def _sample_idx(self, seq_len):
         """
         Sample a single sequence chunk uniformly from the memory.
 
@@ -60,14 +60,14 @@ class ExperienceReplay:
             # print("HEREE")
             # print(f'self.size={self.size}, self.idx={self.idx} L ={L}')
 
-            idx = np.random.randint(0, self.size if self.full else self.idx - L)
-            idxs = np.arange(idx, idx + L) % self.size
+            idx = np.random.randint(0, self.size if self.full else self.idx - seq_len)
+            idxs = np.arange(idx, idx + seq_len) % self.size
             valid_idx = (
                 not self.idx in idxs[1:]
             )  # Make sure data does not cross the memory index
         return idxs
 
-    def _retrieve_batch(self, idxs, n, L):
+    def _retrieve_batch(self, idxs, n_seq, seq_len):
         """
         Retrieve a batch of sequence chunks uniformly sampled from the memory.
         """
@@ -78,20 +78,20 @@ class ExperienceReplay:
             # Undo discretisation for visual observations
             preprocess_observation_(observations, self.bit_depth)
         return (
-            observations.reshape(L, n, *observations.shape[1:]),
-            self.actions[vec_idxs].reshape(L, n, -1),
-            self.rewards[vec_idxs].reshape(L, n),
-            self.nonterminals[vec_idxs].reshape(L, n, 1),
+            observations.reshape(seq_len, n_seq, *observations.shape[1:]),
+            self.actions[vec_idxs].reshape(seq_len, n_seq, -1),
+            self.rewards[vec_idxs].reshape(seq_len, n_seq),
+            self.nonterminals[vec_idxs].reshape(seq_len, n_seq, 1),
         )
 
-    def sample(self, n, L):
+    def sample(self, n_seq, seq_len):
         """
         Sample a batch of n sequence chunks of length L uniformly from the memory.
         """
         # print(self.size, n, L)
 
         batch = self._retrieve_batch(
-            np.asarray([self._sample_idx(L) for _ in range(n)]), n, L
+            np.asarray([self._sample_idx(seq_len) for _ in range(n_seq)]), n_seq, seq_len
         )
         # print(np.asarray([self._sample_idx(L) for _ in range(n)]))
         # [1578 1579 1580 ... 1625 1626 1627] | 0/100 [00:00<?, ?it/s]

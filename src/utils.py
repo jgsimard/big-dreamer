@@ -20,7 +20,7 @@ def cat(x: Tensor, y: Tensor) -> Tensor:
     :param y:
     :return:
     """
-    return torch.cat([x, y], dim=1)
+    return torch.cat([x, y], dim=-1)
 
 
 def chunk(x: Tensor) -> List[Tensor]:

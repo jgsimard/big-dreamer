@@ -46,11 +46,10 @@ render: False
 log_freq : 100
 log_video_freq : -1
 wandb_project : null # 'test-project'
-fps: 10
 
 # Dreamer V2
 
-kl_balance:  0.8
+kl_balance:  -1
 kl_loss_weight: 0.1 # 0.1 for dreamerV2
 
 latent_distribution: "Gaussian" # so far Gaussian, Categorial
@@ -59,7 +58,7 @@ discrete_latent_classes: 32
 action_distribution: "Gaussian" # so far Gaussian, Categorial
 
 jit: False
-
+planner_algorithm: 'actor_critic' # 'actor_critic' or 'mpc'
 MPC:
  optimisation_iters: 10
  candidates: 1000
@@ -68,10 +67,11 @@ MPC:
 ActorCritic:
  actor_learning_rate: 4e-5
  value_learning_rate: 1e-4
- entropy_weight: 1e-5
- slow_critic_update_interval: 100
+ entropy_weight: -1 #1e-5
+ slow_critic_update_interval: 1
  polyak_avg: 1.0
  gradient_mixing: -1
+ use_target: False
 
 use_discount: False
 discount_weight: 5.0

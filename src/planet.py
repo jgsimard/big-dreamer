@@ -12,16 +12,15 @@ from typeguard import typechecked
 
 from env import EnvBatcher
 from memory import ExperienceReplay
-from models import TransitionModel, ObservationModel, DenseModel, CnnImageEncoder
+from models import RSSM, ObservationModel, DenseModel, CnnImageEncoder
 from utils import device
 from planner import MPCPlanner
-from base_agent import BaseAgent
 
 patch_typeguard()
 
 DiscreteState = namedtuple('DiscreteState', [])
 
-class Planet(BaseAgent):
+class Planet:
     """
     A planet-based agent.
     """
@@ -42,7 +41,7 @@ class Planet(BaseAgent):
 
         self.batch_size = params["batch_size"]
         self.seq_len = params["seq_len"]
-
+        self.n_layers = params['n_layers']
         self.seed_episodes = params["seed_episodes"]
         self.seed_steps = params["seed_steps"]
 
@@ -59,7 +58,6 @@ class Planet(BaseAgent):
         self.jit = params['jit']
 
         self.planning_horizon = params["planning_horizon"]
-
         self.pixel_observation = params['pixel_observation']
 
         """
@@ -138,31 +136,27 @@ class Planet(BaseAgent):
         Initialize the replay buffer with random transitions.
         """
 
-        total_steps = 0
-        s = 0
-        while total_steps < self.seed_steps:
-        # for s in range(1, self.seed_episodes + 1):
+        n_steps = 0
+        n_epidodes = 0
+        while n_steps < self.seed_steps:
             done = False
-            t = 0
             observation = self.env.reset()
-            # print(f'observation.shape={observation.shape}')
             while not done:
                 action = self.env.sample_random_action()
                 next_observation, reward, done = self.env.step(action)
                 self.buffer.append(observation, action, reward, done)
                 observation = next_observation
-                t += 1
-            s += 1
+                n_steps += self.action_repeat
+            n_epidodes += 1
 
-            total_steps += t * self.action_repeat
         self.env.close()
-        return total_steps, s
+        return n_steps, n_epidodes
 
     def initialize_models(self) -> None:
         """
         Initialize the different models.
         """
-        self.transition_model = TransitionModel(
+        self.transition_model = RSSM(
             self.belief_size,
             self.state_size,
             self.action_size,
@@ -178,6 +172,7 @@ class Planet(BaseAgent):
             self.belief_size + self.state_size,
             self.hidden_size,
             activation=self.dense_activation_function,
+            n_layers=self.n_layers
         ).to(device=device)
 
         if self.pixel_observation:
@@ -196,13 +191,15 @@ class Planet(BaseAgent):
                 self.env.observation_size,
                 self.hidden_size,
                 self.embedding_size,
-                self.dense_activation_function
+                self.dense_activation_function,
+                self.n_layers
             )
             self.observation_model = DenseModel(
                 self.belief_size + self.state_size,
                 self.hidden_size,
                 self.env.observation_size,
-                self.dense_activation_function
+                self.dense_activation_function,
+                self.n_layers
             )
 
         self.planner = MPCPlanner(
@@ -215,6 +212,14 @@ class Planet(BaseAgent):
             self.reward_model,
         )
 
+        # print("Transition model")
+        # print(self.transition_model)
+        # print("Observation model")
+        # print(self.observation_model)
+        # print("Reward model")
+        # print(self.reward_model)
+        # print("Encoder model")
+        # print(self.encoder)
         if self.jit:
             self.transition_model = torch.jit.script(self.transition_model)
             self.observation_model = torch.jit.script(self.observation_model)
@@ -373,26 +378,32 @@ class Planet(BaseAgent):
         """
         Update belief and action given an observation.
         """
+        # print("update_belief_and_act 1")
         embedding = self.encoder(observation).unsqueeze(dim=0)
         # Infer belief over current state q(s_t|o≤t,a<t) from the history
         # Action and observation need extra time dimension
+        # print("update_belief_and_act 2")
         belief, _, _, posterior_state, _ = self.transition_model(
             posterior_state,
             action.unsqueeze(dim=0),
             belief,
             embedding,
         )
+        # print("update_belief_and_act 3")
         # Remove time dimension from belief/state
         belief = belief.squeeze(dim=0)
         posterior_state = posterior_state.squeeze(dim=0)
 
         # Get action from planner(q(s_t|o≤t,a<t), p)
+        # print("update_belief_and_act 4")
         action, _ = self.get_action(belief, posterior_state)
 
+        # print("update_belief_and_act 5")
         if explore:
             # Add gaussian exploration noise on top of the sampled action
             # print(self.action_noise, action)
             action = torch.clamp(Normal(action, self.action_noise).rsample(), -1, 1)
+        # print("update_belief_and_act 6")
 
         # Perform environment step (action repeats handled internally)
         next_observation, reward, done = env.step(

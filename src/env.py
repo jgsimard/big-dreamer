@@ -77,7 +77,7 @@ class BaseEnv:
         self.pixel_observation = pixel_observation
 
         self.bit_depth = bit_depth
-        self.t = 0
+        self.timestep = 0
 
         """
         Initialise the observation space.
@@ -251,7 +251,7 @@ class GymEnv(BaseEnv):
         Resets the environment.
         """
 
-        self.t = 0
+        self.timestep = 0
         state = self._env.reset()
         if self.pixel_observation:
             return images_to_observation(
@@ -272,8 +272,8 @@ class GymEnv(BaseEnv):
         for _ in range(self.action_repeat):
             state, reward_k, done, _ = self._env.step(action)
             reward += reward_k
-            self.t += 1  # Increment internal timer
-            done = done or self.t == self.max_episode_length
+            self.timestep += 1  # Increment internal timer
+            done = done or self.timestep == self.max_episode_length
             if done:
                 break
         if self.pixel_observation:
@@ -317,7 +317,7 @@ class GymEnv(BaseEnv):
         return torch.from_numpy(self._env.action_space.sample())
 
 
-def Env(params) -> BaseEnv:
+def get_env(params) -> BaseEnv:
     """
     Returns an environment wrapper.
     """
@@ -345,10 +345,10 @@ class EnvBatcher:
     Wrapper for batching environments together.
     """
 
-    def __init__(self, env_class, env_params, n) -> None:
-        self.n = n
-        self.envs = [env_class(env_params) for _ in range(n)]
-        self.dones = [True] * n
+    def __init__(self, env_class, env_params, n_env) -> None:
+        self.n_env = n_env
+        self.envs = [env_class(env_params) for _ in range(n_env)]
+        self.dones = [True] * n_env
 
     def reset(self) -> List[np.ndarray]:
         """
@@ -357,7 +357,7 @@ class EnvBatcher:
         """
 
         observations = [env.reset() for env in self.envs]
-        self.dones = [False] * self.n
+        self.dones = [False] * self.n_env
         return torch.cat(observations)
 
     def step(self, actions) -> Tuple[List[np.ndarray], List[float], List[bool]]:

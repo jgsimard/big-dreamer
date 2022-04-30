@@ -4,17 +4,29 @@ import time
 import hydra
 import numpy as np
 import torch
-from omegaconf import DictConfig, open_dict
+from omegaconf import DictConfig, open_dict, OmegaConf
 from tqdm import tqdm
 from torchvision.utils import make_grid
 
-
-from planet import Planet
-from dreamer import Dreamer
-from dreamerV2 import DreamerV2
+from agent import Agent
 from logger import Logger
-from env import Env, EnvBatcher
+from env import get_env, EnvBatcher
 from utils import init_gpu, device
+
+
+def init_(n, p, e):
+    """
+    init
+
+    :param n:
+    :param p:
+    :param e:
+    :return:
+    """
+    belief = torch.zeros(n, p["belief_size"], device=device)
+    state = torch.zeros(n, p["state_size"], device=device)
+    action = torch.zeros(n, e.action_size, device=device)
+    return belief, state, action
 
 
 @hydra.main(config_path="conf", config_name="config")
@@ -23,11 +35,12 @@ def my_app(cfg: DictConfig) -> None:
     Main function for running the experiments.
     """
     print("Command Dir:", os.getcwd())
+    print(OmegaConf.to_yaml(cfg))
 
     params = vars(cfg)
     for key, value in cfg.items():
         params[key] = value
-    print("params: ", params)
+    # print("params: ", params)
 
     ##################################
     ### CREATE DIRECTORY FOR LOGGING
@@ -61,26 +74,13 @@ def my_app(cfg: DictConfig) -> None:
 
     logger = Logger(params["logdir"], params=params)
 
-    #############
-    # ENV
-    #############
-    env = Env(params)
+    env = get_env(params)
+    agent = Agent(params, env)
 
-    #############
-    # Model
-    #############
-    if params["algorithm"] == "planet":
-        model = Planet(params, env)
-    elif params["algorithm"] == "dreamer":
-        model = Dreamer(params, env)
-    elif params["algorithm"] == "dreamerV2":
-        model = DreamerV2(params, env)
-    else:
-        raise NotImplementedError(
-            f'algorithm {params["algorithm"]} is not yet implemented.'
-        )
+    if params['jit']:
+        agent = torch.jit.script(agent)
 
-    env_steps, num_episodes = model.randomly_initialize_replay_buffer()
+    env_steps, num_episodes = agent.randomly_initialize_replay_buffer()
     print(f"Initialized with {num_episodes} episodes and {env_steps} steps")
 
     logs ={}
@@ -90,42 +90,34 @@ def my_app(cfg: DictConfig) -> None:
     episode_reward = 0
     last_episode_reward = 0
     episode_steps = 0
-    belief = torch.zeros(1, params["belief_size"], device=device)
-    posterior_state = torch.zeros(1, params["state_size"], device=device)
-    action = torch.zeros(1, env.action_size, device=device)
+    belief, posterior_state, action = init_(1, params, env)
+
     ###################
     # TRAINING LOOP
     ###################
     for step in range(env_steps, params['train_steps']):
+        # print("Twerk 1")
         ###################
         # Weight updates
         ###################
         if step % params['environment_steps_per_update'] == 0:
             weight_update_start_time = time.time()
             for _ in range(params['collect_interval']):
-                logs = model.train_step()
+                logs = agent.train_step()
                 elapsed_time = time.time() - weight_update_start_time
                 logs["weight_update_per_sec"] = params['collect_interval'] / elapsed_time
 
+        # print("Twerk 2")
         if params["algorithm"] in ['dreamer', 'dreamerV2']:
             if step % params['ActorCritic']['slow_critic_update_interval']:
-                model.update_critic()
+                agent.update_critic()
 
         ##########################
         # Environment interaction
         ##########################
         # print("Data collection")
         with torch.no_grad():
-            # observation = env.reset()
-            # total_reward = 0
-            # belief = torch.zeros(1, params["belief_size"], device=device)
-            # posterior_state = torch.zeros(1, params["state_size"], device=device)
-            # action = torch.zeros(1, env.action_size, device=device)
-
-            # pbar = tqdm(range(params["max_episode_length"] // params["action_repeat"]))
-            # t = 0
-
-            # for t in pbar:
+            # print("Twerk 3")
             (
                 belief,
                 posterior_state,
@@ -133,7 +125,7 @@ def my_app(cfg: DictConfig) -> None:
                 next_observation,
                 reward,
                 done,
-            ) = model.update_belief_and_act(
+            ) = agent.update_belief_and_act(
                 env,
                 belief,
                 posterior_state,
@@ -143,7 +135,7 @@ def my_app(cfg: DictConfig) -> None:
             )
 
             # store the new stuff
-            model.buffer.append(observation, action, reward, done)
+            agent.buffer.append(observation, action, reward, done)
 
             episode_reward += reward
             episode_steps += 1
@@ -151,25 +143,21 @@ def my_app(cfg: DictConfig) -> None:
 
             # print(episode_reward)
 
+            # print("Twerk 4")
+
             if params["render"]:
                 env.render()
             if done or episode_steps % params["max_episode_length"] == 0:
-                # pbar.close()
-                # env.close()
-                # break
                 observation = env.reset()
                 # done = False
                 last_episode_reward = episode_reward
                 episode_reward = 0
                 episode_steps = 0
-                # todo use inplace stuff instead
-                belief = torch.zeros(1, params["belief_size"], device=device)
-                posterior_state = torch.zeros(1, params["state_size"], device=device)
-                action = torch.zeros(1, env.action_size, device=device)
+
+                belief, posterior_state, action = init_(1, params, env)
 
                 num_episodes += 1
-            # env_steps += t * params["action_repeat"]
-            # num_episodes += 1
+            # print("Twerk 5")
             logs["episode_total_reward"] = last_episode_reward
 
         ##########################
@@ -193,25 +181,18 @@ def my_app(cfg: DictConfig) -> None:
         ##########################
         if step % params["test_interval"] == 0:
             print("\nTest model")
-            model.eval()
+            agent.eval()
 
             # Initialise parallelised test environments
-            test_envs = EnvBatcher(Env, params, params["test_episodes"])
+            test_envs = EnvBatcher(get_env, params, params["test_episodes"])
 
             with torch.no_grad():
                 observation_test = test_envs.reset()
                 total_rewards_test = np.zeros((params["test_episodes"],))
                 video_frames_test = []
 
-                belief_test = torch.zeros(
-                    params["test_episodes"], params["belief_size"], device=device
-                )
-                posterior_state_test = torch.zeros(
-                    params["test_episodes"], params["state_size"], device=device
-                )
-                action_test = torch.zeros(
-                    params["test_episodes"], env.action_size, device=device
-                )
+                belief_test, post_state_test, action_test = init_(
+                    params["test_episodes"], params, env)
 
                 pbar_test = tqdm(
                     range(params["max_episode_length"] // params["action_repeat"])
@@ -219,15 +200,15 @@ def my_app(cfg: DictConfig) -> None:
                 for _ in pbar_test:
                     (
                         belief_test,
-                        posterior_state_test,
+                        post_state_test,
                         action_test,
                         next_observation_test,
                         reward_test,
                         done_test,
-                    ) = model.update_belief_and_act(
+                    ) = agent.update_belief_and_act(
                         test_envs,
                         belief_test,
-                        posterior_state_test,
+                        post_state_test,
                         action_test,
                         observation_test.to(device=device),
                     )
@@ -241,8 +222,8 @@ def my_app(cfg: DictConfig) -> None:
                                 torch.cat(
                                     [
                                         observation,
-                                        model.observation_model(
-                                            belief_test, posterior_state_test
+                                        agent.observation_model(
+                                            belief_test, post_state_test
                                         ).cpu(),
                                     ],
                                     dim=3,
@@ -268,7 +249,7 @@ def my_app(cfg: DictConfig) -> None:
                 for key, value in test_logs.items():
                     print(f"{key} : {value}")
                     logger.log_scalar(value, key, step)
-                model.eval()
+                agent.eval()
             test_envs.close()
 
             # TODO : Save Model
@@ -283,6 +264,7 @@ def my_app(cfg: DictConfig) -> None:
                 )
     # Close training environment
     env.close()
+
 
 if __name__ == "__main__":
     import os
