@@ -118,14 +118,7 @@ def my_app(cfg: DictConfig) -> None:
         # print("Data collection")
         with torch.no_grad():
             # print("Twerk 3")
-            (
-                belief,
-                posterior_state,
-                action,
-                next_observation,
-                reward,
-                done,
-            ) = agent.update_belief_and_act(
+            belief, posterior_state, action, next_observation, reward, done, = agent.step(
                 env,
                 belief,
                 posterior_state,
@@ -141,10 +134,7 @@ def my_app(cfg: DictConfig) -> None:
             episode_steps += 1
             observation = next_observation
 
-            # print(episode_reward)
-
             # print("Twerk 4")
-
             if params["render"]:
                 env.render()
             if done or episode_steps % params["max_episode_length"] == 0:
@@ -205,7 +195,7 @@ def my_app(cfg: DictConfig) -> None:
                         next_observation_test,
                         reward_test,
                         done_test,
-                    ) = agent.update_belief_and_act(
+                    ) = agent.step(
                         test_envs,
                         belief_test,
                         post_state_test,

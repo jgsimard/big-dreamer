@@ -99,12 +99,12 @@ class Dreamer(Planet):
             distribution_parameters: Tuple[Tensor, ...],
             detach: bool=False
     ) -> torch.distributions.Distribution:
-        if self.latent_distribution == "Gaussian":
+        if self.latent_distribution == "normal":
             means, std_devs = distribution_parameters
             if detach:
                 means, std_devs = means.detach(), std_devs.detach()
             return Normal(means, std_devs)
-        if self.latent_distribution == "Categorical":
+        if self.latent_distribution == "categorical":
             logits, = distribution_parameters
             if detach:
                 logits = logits.detach()
@@ -204,10 +204,10 @@ class Dreamer(Planet):
         prior_states = prefill(self.planning_horizon)
         action_entropy = prefill(self.planning_horizon)
 
-        if self.latent_distribution == "Gaussian":
+        if self.latent_distribution == "normal":
             prior_means = prefill(self.planning_horizon)
             prior_std_devs = prefill(self.planning_horizon)
-        elif self.latent_distribution == "Categorical":
+        elif self.latent_distribution == "categorical":
             prior_logits = prefill(self.planning_horizon)
 
         beliefs[0] = prev_belief
@@ -226,17 +226,17 @@ class Dreamer(Planet):
 
             # Compute state prior by applying transition dynamics
             prior_states[t + 1], prior_params_ = self.transition_model.belief_prior(beliefs[t + 1])
-            if self.latent_distribution == "Gaussian":
+            if self.latent_distribution == "normal":
                 prior_means[t + 1], prior_std_devs[t + 1] = prior_params_
-            elif self.latent_distribution == "Categorical":
+            elif self.latent_distribution == "categorical":
                 prior_logits[t + 1] = prior_params_
 
         beliefs = stack(beliefs)
         prior_states = stack(prior_states)
         action_entropy = stack(action_entropy)
-        if self.latent_distribution == "Gaussian":
+        if self.latent_distribution == "normal":
             prior_params = (stack(prior_means), stack(prior_std_devs))
-        elif self.latent_distribution == "Categorical":
+        elif self.latent_distribution == "categorical":
             prior_params = (stack(prior_logits),)
 
         return beliefs, prior_states, prior_params, action_entropy

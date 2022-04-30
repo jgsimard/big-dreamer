@@ -25,15 +25,15 @@ patch_typeguard()
 
 def _get_dist(
         distribution_parameters: Tuple[Tensor, ...],
-        distribution: str = "Gaussian",
+        distribution: str = "normal",
         detach: bool = False
 ) -> torch.distributions.Distribution:
-    if distribution == "Gaussian":
+    if distribution == "normal":
         means, std_devs = distribution_parameters
         if detach:
             means, std_devs = means.detach(), std_devs.detach()
         return Normal(means, std_devs)
-    if distribution == "Categorical":
+    if distribution == "categorical":
         logits, = distribution_parameters
         if detach:
             logits = logits.detach()
@@ -280,7 +280,6 @@ class Agent(nn.Module):
             self.model_optimizer.load_state_dict(model_dicts["model_optimizer"])
             raise NotImplementedError()
 
-
     def randomly_initialize_replay_buffer(self) -> List[int]:
         """
         Initialize the replay buffer with random transitions.
@@ -302,7 +301,7 @@ class Agent(nn.Module):
         self.env.close()
         return n_steps, n_epidodes
 
-    def update_belief_and_act(
+    def step(
         self, env, belief, posterior_state, action, observation, explore=False
     ):
         """
@@ -440,10 +439,10 @@ class Agent(nn.Module):
         prior_states = prefill(self.planning_horizon)
         action_entropy = prefill(self.planning_horizon)
 
-        if self.latent_distribution == "Gaussian":
+        if self.latent_distribution == "normal":
             prior_means = prefill(self.planning_horizon)
             prior_std_devs = prefill(self.planning_horizon)
-        elif self.latent_distribution == "Categorical":
+        elif self.latent_distribution == "categorical":
             prior_logits = prefill(self.planning_horizon)
 
         beliefs[0] = prev_belief
@@ -462,17 +461,17 @@ class Agent(nn.Module):
 
             # Compute state prior by applying transition dynamics
             prior_states[t + 1], prior_params_ = self.rssm.belief_prior(beliefs[t + 1])
-            if self.latent_distribution == "Gaussian":
+            if self.latent_distribution == "normal":
                 prior_means[t + 1], prior_std_devs[t + 1] = prior_params_
-            elif self.latent_distribution == "Categorical":
+            elif self.latent_distribution == "categorical":
                 prior_logits[t + 1] = prior_params_
 
         beliefs = stack(beliefs)
         prior_states = stack(prior_states)
         action_entropy = stack(action_entropy)
-        if self.latent_distribution == "Gaussian":
+        if self.latent_distribution == "normal":
             prior_params = (stack(prior_means), stack(prior_std_devs))
-        elif self.latent_distribution == "Categorical":
+        elif self.latent_distribution == "categorical":
             prior_params = (stack(prior_logits),)
 
         return beliefs, prior_states, prior_params, action_entropy

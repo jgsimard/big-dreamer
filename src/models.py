@@ -109,7 +109,7 @@ class RSSM(nn.Module):
         embedding_size: int,
         activation: Optional[str] = "ELU",
         min_std_dev: float = 0.1,
-        latent_distribution: Optional[str] = "Gaussian",
+        latent_distribution: Optional[str] = "normal",
         discrete_latent_dimensions: Optional[int] = 32,
         discrete_latent_classes: Optional[int] = 32
     ) -> None:
@@ -120,7 +120,7 @@ class RSSM(nn.Module):
             activation = getattr(nn, activation)
         self.min_std_dev = min_std_dev
 
-        assert latent_distribution in ["Gaussian", "Categorical"], f"{latent_distribution}"
+        assert latent_distribution in ["normal", "categorical"], f"{latent_distribution}"
         self.latent_distribution = latent_distribution
 
         # recurrent component
@@ -133,7 +133,7 @@ class RSSM(nn.Module):
         print(self.fc_embed_state_action)
 
         # Belief models
-        if self.latent_distribution == "Gaussian":
+        if self.latent_distribution == "normal":
             self.belief_prior = GaussianBeliefModel(
                 belief_size, hidden_size, state_size, activation, min_std_dev
             )
@@ -144,7 +144,7 @@ class RSSM(nn.Module):
                 activation,
                 min_std_dev,
             )
-        elif self.latent_distribution == "Categorical":
+        elif self.latent_distribution == "categorical":
             self.belief_prior = CategoricalBeliefModel(
                 belief_size,
                 hidden_size,
@@ -200,12 +200,12 @@ class RSSM(nn.Module):
         prior_states = prefill(T)
         posterior_states = prefill(T)
 
-        if self.latent_distribution == "Gaussian":
+        if self.latent_distribution == "normal":
             prior_means = prefill(T)
             prior_std_devs = prefill(T)
             posterior_means = prefill(T)
             posterior_std_devs = prefill(T)
-        elif self.latent_distribution == "Categorical":
+        elif self.latent_distribution == "categorical":
             prior_logits = prefill(T)
             posterior_logits = prefill(T)
 
@@ -236,9 +236,9 @@ class RSSM(nn.Module):
             # print("TransitionModel.forward 6")
             # Compute state prior by applying transition dynamics
             prior_states[t + 1], prior_params_ = self.belief_prior(beliefs[t + 1])
-            if self.latent_distribution == "Gaussian":
+            if self.latent_distribution == "normal":
                 prior_means[t + 1], prior_std_devs[t + 1] = prior_params_
-            elif self.latent_distribution == "Categorical":
+            elif self.latent_distribution == "categorical":
                 prior_logits[t + 1] = prior_params_
 
             if embeddings is not None:
@@ -247,9 +247,9 @@ class RSSM(nn.Module):
                 t_ = t - 1  # Using t_ to deal with different time indexing for observations
                 posterior_input = cat(beliefs[t + 1], embeddings[t_ + 1])
                 posterior_states[t + 1], post_params_ = self.belief_posterior(posterior_input)
-                if self.latent_distribution == "Gaussian":
+                if self.latent_distribution == "normal":
                     posterior_means[t + 1], posterior_std_devs[t + 1] = post_params_
-                elif self.latent_distribution == "Categorical":
+                elif self.latent_distribution == "categorical":
                     posterior_logits[t + 1] = post_params_
 
         # print("TransitionModel.forward 7")
@@ -260,9 +260,9 @@ class RSSM(nn.Module):
         prior_states = stack(prior_states)
 
         prior_params = None
-        if self.latent_distribution == "Gaussian":
+        if self.latent_distribution == "normal":
             prior_params = (stack(prior_means), stack(prior_std_devs))
-        elif self.latent_distribution == "Categorical":
+        elif self.latent_distribution == "categorical":
             prior_params = (stack(prior_logits),)
 
         # print("TransitionModel.forward 8")
@@ -271,9 +271,9 @@ class RSSM(nn.Module):
             posterior_states = stack(posterior_states)
             # add posterior params
             posterior_params = None
-            if self.latent_distribution == "Gaussian":
+            if self.latent_distribution == "normal":
                 posterior_params = (stack(posterior_means), stack(posterior_std_devs))
-            elif self.latent_distribution == "Categorical":
+            elif self.latent_distribution == "categorical":
                 posterior_params = (stack(posterior_logits))
         else:
             posterior_states, posterior_params = None, None
@@ -457,23 +457,23 @@ class ActorModel(nn.Module):
         hidden_size: int,
         action_size: int,
         activation_function: str = "ELU",
-        action_distribution: str = 'Gaussian',
+        action_distribution: str = 'normal',
         min_std: float = 1e-4,
         init_std: float = 5,
         mean_scale: float = 5,
         n_layers: int = 4
     ) -> None:
         super().__init__()
-        if action_distribution == 'Gaussian':
+        if action_distribution == 'normal':
             output_size = 2 * action_size
-        elif action_distribution == 'Categorical':
+        elif action_distribution == 'categorical':
             output_size = action_size
         else:
-            NotImplementedError()
+            NotImplementedError(f"{action_distribution} is not yet implemented")
 
         self.model = build_mlp(
             input_size=belief_size + state_size,
-            output_size= output_size,
+            output_size=output_size,
             n_layers=n_layers,
             hidden_size=hidden_size,
             activation=activation_function
@@ -492,12 +492,12 @@ class ActorModel(nn.Module):
         """
         out_model = self.model(cat(belief, state)).squeeze(dim=1)
 
-        if self.action_distribution == 'Gaussian':
+        if self.action_distribution == 'normal':
             action_mean, action_std_dev = torch.chunk(out_model, 2, dim=1)
             action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
             action_std = F.softplus(action_std_dev + self.raw_init_std) + self._min_std
             return action_mean, action_std
-        if self.action_distribution == 'Categorical':
+        if self.action_distribution == 'categorical':
             action_dist = self.get_action_dist(out_model)
             action = action_dist.sample()
             action = action + action_dist.probs - action_dist.probs.detach()

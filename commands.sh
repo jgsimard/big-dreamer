@@ -51,7 +51,7 @@ python src/main.py disable_cuda=False \
                     pixel_observation=False \
                     embedding_size=256 \
                     kl_balance=-1 \
-                    latent_distribution=Gaussian\
+                    latent_distribution=normal\
                     environment_steps_per_update=5 \
                     ActorCritic.entropy_weight=-1 \
                     ActorCritic.slow_critic_update_interval=1 \
@@ -59,4 +59,4 @@ python src/main.py disable_cuda=False \
 
 
 #                    kl_balance=0.8 \
-#                    latent_distribution=Gaussian\
+#                    latent_distribution=normal\

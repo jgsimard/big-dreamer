@@ -52,10 +52,10 @@ wandb_project : null # 'test-project'
 kl_balance:  -1
 kl_loss_weight: 0.1 # 0.1 for dreamerV2
 
-latent_distribution: "Gaussian" # so far Gaussian, Categorial
+latent_distribution: "normal" # so far Gaussian, Categorial
 discrete_latent_dimensions: 32
 discrete_latent_classes: 32
-action_distribution: "Gaussian" # so far Gaussian, Categorial
+action_distribution: "normal" # so far Gaussian, Categorial
 
 jit: False
 planner_algorithm: 'actor_critic' # 'actor_critic' or 'mpc'
