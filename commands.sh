@@ -35,9 +35,7 @@ ENV=Hopper-v2 # [-1, 1] # short
 #                    discrete_latent_dimensions=16 \
 #                    discrete_latent_classes=16
 
-export HYDRA_FULL_ERROR=1
-python src/main.py disable_cuda=False \
-                    algorithm='dreamer' \
+python src/main.py disable_cuda=True \
                     env=${ENV} \
                     action_repeat=2 \
                     seed_steps=200 \
@@ -50,12 +48,8 @@ python src/main.py disable_cuda=False \
                     n_layers=2 \
                     pixel_observation=False \
                     embedding_size=256 \
-                    kl_balance=-1 \
                     latent_distribution=normal\
-                    environment_steps_per_update=5 \
-                    ActorCritic.entropy_weight=-1 \
-                    ActorCritic.slow_critic_update_interval=1 \
-                    ActorCritic.use_target=False
+                    environment_steps_per_update=5
 
 
 #                    kl_balance=0.8 \

@@ -97,9 +97,9 @@ class CategoricalBeliefModel(nn.Module):
 
 class RSSM(nn.Module):
     """
-    Transition model for the MDP.
+    Recurrent State Space Model (RSSM)
+    see PlaNet / Dreamer
     """
-
     def __init__(
         self,
         belief_size: int,
@@ -128,14 +128,17 @@ class RSSM(nn.Module):
 
         # model components
         self.fc_embed_state_action = build_mlp(
-            state_size+action_size, -1, belief_size, 0, output_activation=activation
+            state_size + action_size, -1, belief_size, 0, output_activation=activation
         )
-        print(self.fc_embed_state_action)
 
         # Belief models
         if self.latent_distribution == "normal":
             self.belief_prior = GaussianBeliefModel(
-                belief_size, hidden_size, state_size, activation, min_std_dev
+                belief_size,
+                hidden_size,
+                state_size,
+                activation,
+                min_std_dev
             )
             self.belief_posterior = GaussianBeliefModel(
                 belief_size + embedding_size,
@@ -362,87 +365,18 @@ class DenseModel(nn.Module):
     ) -> None:
         super().__init__()
         self.model = build_mlp(input_size, hidden_size, output_size, n_layers, activation)
-        # self.model = build_mlp(belief_size + state_size, hidden_size, 1, n_layers, activation)
         self.distribution = distribution
 
-    # def forward(self, belief: Tensor, state: Tensor) -> Tensor:
-    #     """
-    #     Forward pass.
-    #     """
-    #     x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
-    #     x = self.model(x)
-    #     return x
     def forward(self, *args: Tuple[Tensor]) -> Tensor:
         """
         Forward pass.
         """
         if len(args) == 2:
-            # print("Twerk")
             belief, state = args
-            # print("Twerk 2")
-            # print(belief.shape, state.shape)
             x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
-            # print("Twerk 3")
         else:
             x, = args
-
-        x = self.model(x)
-        return x
-
-# class RewardModel(nn.Module):
-#     """
-#     Reward model.
-#     """
-#
-#     def __init__(
-#         self,
-#         belief_size: int,
-#         state_size: int,
-#         hidden_size: int,
-#         activation: str = "ELU",
-#         n_layers:int = 4
-#     ) -> None:
-#         super().__init__()
-#         self.model = build_mlp(belief_size+state_size, hidden_size, 1, n_layers, activation)
-#
-#     def forward(self, belief: Tensor, state: Tensor) -> Tensor:
-#         """
-#         Forward pass.
-#         """
-#         x = torch.cat([belief, state], dim=-1)  # (L, B , S+Be)
-#         x = self.model(x)
-#         return x
-
-
-# class CriticModel(nn.Module):
-#     """
-#     Critic model.
-#     """
-#
-#     def __init__(
-#         self,
-#         belief_size: int,
-#         state_size: int,
-#         hidden_size: int,
-#         activation: Optional[str] = "ELU",
-#         n_layers: int = 4
-#     ) -> None:
-#         super().__init__()
-#
-#         self.model = build_mlp(
-#             input_size = belief_size + state_size,
-#             output_size = 1,
-#             n_layers = n_layers,
-#             hidden_size = hidden_size,
-#             activation = activation
-#         )
-#     def forward(self, belief, state):
-#         """
-#         Forward pass.
-#         Input: belief, state
-#         """
-#
-#         return self.model(cat(belief, state)).squeeze(dim=1)
+        return self.model(x)
 
 
 class ActorModel(nn.Module):

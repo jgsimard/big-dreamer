@@ -1,4 +1,4 @@
-from typing import Tuple, Dict, Any, Union, List
+from typing import Tuple, Dict, Any, Union
 import copy
 import os
 
@@ -7,7 +7,7 @@ from torch import optim, nn, Tensor
 from torch.nn.utils import clip_grad_norm_
 from torch.distributions import Normal, kl_divergence, OneHotCategoricalStraightThrough, Independent
 import torch.distributions as D
-from torch.distributions.transformed_distribution import TransformedDistribution
+#from torch.distributions.transformed_distribution import TransformedDistribution
 
 from torchtyping import TensorType, patch_typeguard
 from typeguard import typechecked
@@ -15,7 +15,7 @@ from typeguard import typechecked
 from memory import ExperienceReplay
 from utils import FreezeParameters, device, cat, prefill, stack, polyak_update
 from models import \
-    RSSM, ObservationModel, DenseModel, CnnImageEncoder, ActorModel, TanhBijector, SampleDist
+    RSSM, ObservationModel, DenseModel, CnnImageEncoder, ActorModel#, TanhBijector, SampleDist
 from planner import MPCPlanner
 from env import EnvBatcher
 
@@ -39,7 +39,7 @@ def _get_dist(
             logits = logits.detach()
         return OneHotCategoricalStraightThrough(logits=logits)
     # if it gets here, there is a problem
-    raise NotImplementedError(f'{distribution}  is yet yet implemented')
+    raise NotImplementedError(f'{distribution}  is not yet implemented')
 
 
 class Agent(nn.Module):
@@ -74,7 +74,6 @@ class Agent(nn.Module):
         self.discrete_latent_dimensions = params['discrete_latent_dimensions']
         self.discrete_latent_classes = params['discrete_latent_classes']
 
-        self.jit = params['jit']
 
         self.planning_horizon = params["planning_horizon"]
         self.pixel_observation = params['pixel_observation']
@@ -259,7 +258,7 @@ class Agent(nn.Module):
                 eps=self.adam_epsilon,
                 weight_decay=self.weight_decay
             )
-            self.value_optimizer = optim.Adam(
+            self.critic_optimizer = optim.Adam(
                 self.critic.parameters(),
                 lr=self.value_learning_rate,
                 eps=self.adam_epsilon,
@@ -280,7 +279,7 @@ class Agent(nn.Module):
             self.model_optimizer.load_state_dict(model_dicts["model_optimizer"])
             raise NotImplementedError()
 
-    def randomly_initialize_replay_buffer(self) -> List[int]:
+    def randomly_initialize_replay_buffer(self) -> Tuple[int, int]:
         """
         Initialize the replay buffer with random transitions.
         """
@@ -450,10 +449,9 @@ class Agent(nn.Module):
         action_entropy[0] = torch.zeros(len(beliefs[0]), device=device)
 
         # Loop over time sequence
-        for t in range(self.planning_horizon - 1):
+        for t in range(self.planning_horizon-1):
             _state = prior_states[t]
             actions, action_entropy[t+1] = self.get_action(beliefs[t].detach(), _state.detach())
-
 
             # Compute belief (deterministic hidden state)
             hidden = self.rssm.fc_embed_state_action(cat(_state, actions))
@@ -485,7 +483,6 @@ class Agent(nn.Module):
         discount_target = nonterminals.float()
         discount_logits = self.discount_model(beliefs, posterior_states)
         discount_dist = D.Independent(D.Bernoulli(logits=discount_logits), 1)
-
         discount_loss = -torch.mean(discount_dist.log_prob(discount_target))
 
         return discount_loss
@@ -512,6 +509,7 @@ class Agent(nn.Module):
         embeddings = self.encoder(obs[1:])
 
         # print("HELLO 3")
+        # use transition model to predict next step state
         beliefs, _, prior_params, posterior_states, posterior_params = self.rssm(
             init_state,
             actions[:-1],
@@ -544,13 +542,39 @@ class Agent(nn.Module):
         # Update model parameters
         self.model_optimizer.zero_grad()
         model_loss.backward()
-        clip_grad_norm_(self.model_params, self.grad_clip_norm, norm_type=2)
+        clip_grad_norm_(self.model_params, self.grad_clip_norm)
         self.model_optimizer.step()
 
         ####################
         # BEHAVIOUR LEARNING
         ####################
 
+        actor_loss, critic_loss, ac_logs = self.actor_critic_loss(posterior_states, beliefs)
+        logs.update(ac_logs)
+
+        self.actor_optimizer.zero_grad()
+        self.critic_optimizer.zero_grad()
+
+        actor_loss.backward()
+        critic_loss.backward()
+
+        clip_grad_norm_(self.actor.parameters(), self.grad_clip_norm)
+        clip_grad_norm_(self.critic.parameters(), self.grad_clip_norm)
+
+        self.actor_optimizer.step()
+        self.critic_optimizer.step()
+
+        return logs
+
+    def actor_critic_loss(self, posterior_states, beliefs):
+        """
+        actor critic loss
+
+        :param posterior_states:
+        :param beliefs:
+        :return:
+        """
+        logs = {}
         # Imagine trajectories
         with torch.no_grad():
             actor_states = posterior_states.detach()
@@ -584,11 +608,9 @@ class Agent(nn.Module):
             raise NotImplementedError("gradient_mixing not yet implemented ")
 
         # Update Actor weights
-        policy_entropy = action_entropy.unsqueeze(-1)
-
         if self.entropy_weight != -1:
             # print(objective.shape, policy_entropy.shape)
-            objective = objective + self.entropy_weight * policy_entropy
+            objective = objective + self.entropy_weight * action_entropy.unsqueeze(-1)
         if self.use_discount:
             # discount_arr = torch.cat([torch.ones_like(discount_arr[:, :1]),
             # discount_arr[:, 1:]], dim=1)
@@ -596,18 +618,9 @@ class Agent(nn.Module):
             discount = torch.cumprod(discount_arr, 0)
             objective = discount * objective
         actor_loss = -objective.mean()
-        # actor_loss = - objective.mean(dim=1).sum()
 
-
-        # actor_loss = -torch.mean(returns)
-        # logs["actor_returns"] = returns.item()
         logs["actor_loss"] = actor_loss.item()
-        logs["policy_entropy"] = torch.mean(policy_entropy).item()
-
-        self.actor_optimizer.zero_grad()
-        actor_loss.backward()
-        clip_grad_norm_(self.actor.parameters(), self.grad_clip_norm, norm_type=2)
-        self.actor_optimizer.step()
+        logs["action_entropy"] = torch.mean(action_entropy).item()
 
         # detach the input tensor from the transition network
         with torch.no_grad():
@@ -618,20 +631,14 @@ class Agent(nn.Module):
                 value_discount = discount.detach()
 
         value_dist = Normal(self.critic(value_beliefs, value_prior_states), 1)
-
+        value_xentropy = value_dist.log_prob(target_return)
         if self.use_discount:
-            value_loss = -(value_discount * value_dist.log_prob(target_return)).mean()
-        else:
-            value_loss = -value_dist.log_prob(target_return).mean()
-        logs["value_loss"] = value_loss.item()
+            value_xentropy = value_discount * value_xentropy
 
-        # Update model parameters
-        self.value_optimizer.zero_grad()
-        value_loss.backward()
-        clip_grad_norm_(self.critic.parameters(), self.grad_clip_norm, norm_type=2)
-        self.value_optimizer.step()
+        critic_loss = -torch.mean(value_xentropy)
+        logs["critic_loss"] = critic_loss.item()
 
-        return logs
+        return actor_loss, critic_loss, logs
 
     def update_critic(self) -> None:
         """
@@ -639,22 +646,15 @@ class Agent(nn.Module):
         """
         polyak_update(self.critic_target, self.critic, self.polyak_avg)
 
-    def get_action(self, belief: Tensor, state: Tensor, deterministic: bool = False) -> Tensor:
+    def get_action(self, belief: Tensor, state: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Get action.
         """
 
         action_mean, action_std = self.actor(belief, state)
         dist = D.Normal(action_mean, action_std)
-        dist = TransformedDistribution(dist, TanhBijector())  # clip [-1,1]
         dist = D.Independent(dist, 1)
-        dist = SampleDist(dist)
-
-        if deterministic:
-            sample = dist.mode()
-        else:
-            sample = dist.rsample()
-        return sample, dist.entropy()
+        return dist.rsample(), dist.entropy()
 
 
 @typechecked
@@ -671,8 +671,6 @@ def lambda_return(
     Setting lambda=1 gives a discounted Monte Carlo return.
     Setting lambda=0 gives a fixed 1-step return.
     """
-    print("twerk")
-    print(reward.shape, value.shape, bootstrap.shape)
 
     next_values = torch.cat([value[1:], bootstrap[None]], 0)
     discount_tensor = discount * torch.ones_like(reward)  # pcont
@@ -682,7 +680,8 @@ def lambda_return(
     outputs = []
 
     for index in indices:
-        inp, disc = inputs[index], discount_tensor[index]
+        inp = inputs[index]
+        disc = discount_tensor[index]
         last = inp + disc * lambda_ * last
         outputs.append(last)
 

@@ -1,6 +1,9 @@
 import torch
 from torch import nn
 
+from torchtyping import TensorType
+from typeguard import typechecked
+
 
 class MPCPlanner(nn.Module):
     """
@@ -25,13 +28,14 @@ class MPCPlanner(nn.Module):
         self.optimisation_iters = optimisation_iters
         self.candidates, self.top_candidates = candidates, top_candidates
 
-    def forward(self, belief, state):
+    @typechecked
+    def forward(
+            self,
+            belief: TensorType['batch_size', 'belief_size'],
+            state: TensorType['batch_size', 'state_size']
+    ) -> TensorType['batch_size', 'action_size']:
         """
         Plan actions for the given belief and state.
-
-        :param belief: (B, H, Z)
-        :param state: (B, Z)
-        :return: actions (B, H, A)
         """
 
         batch_size, horizon, state_size = belief.size(0), belief.size(1), state.size(1)

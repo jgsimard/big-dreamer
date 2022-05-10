@@ -76,6 +76,7 @@ def my_app(cfg: DictConfig) -> None:
 
     env = get_env(params)
     agent = Agent(params, env)
+    print(agent)
 
     if params['jit']:
         agent = torch.jit.script(agent)
@@ -83,10 +84,9 @@ def my_app(cfg: DictConfig) -> None:
     env_steps, num_episodes = agent.randomly_initialize_replay_buffer()
     print(f"Initialized with {num_episodes} episodes and {env_steps} steps")
 
-    logs ={}
+    logs = {}
     observation = env.reset()
     past_time = time.time()
-    # done = False
     episode_reward = 0
     last_episode_reward = 0
     episode_steps = 0
@@ -104,11 +104,11 @@ def my_app(cfg: DictConfig) -> None:
             weight_update_start_time = time.time()
             for _ in range(params['collect_interval']):
                 logs = agent.train_step()
-                elapsed_time = time.time() - weight_update_start_time
-                logs["weight_update_per_sec"] = params['collect_interval'] / elapsed_time
+            elapsed_time = time.time() - weight_update_start_time
+            logs["weight_update_per_sec"] = params['collect_interval'] / elapsed_time
 
         # print("Twerk 2")
-        if params["algorithm"] in ['dreamer', 'dreamerV2']:
+        if params["planner_algorithm"] == 'actor_critic':
             if step % params['ActorCritic']['slow_critic_update_interval']:
                 agent.update_critic()
 
